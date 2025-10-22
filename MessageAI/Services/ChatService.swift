@@ -188,7 +188,9 @@ class ChatService: ObservableObject {
                             deliveredTo: data["deliveredTo"] as? [String] ?? [],
                             readBy: data["readBy"] as? [String] ?? [],
                             deletedBy: data["deletedBy"] as? [String],
-                            deletedForEveryone: data["deletedForEveryone"] as? Bool
+                            deletedForEveryone: data["deletedForEveryone"] as? Bool,
+                            editedAt: (data["editedAt"] as? Timestamp)?.dateValue(),
+                            editHistory: data["editHistory"] as? [String]
                         )
                     }
                     
@@ -896,15 +898,17 @@ struct Message: Identifiable, Codable, Hashable {
     let id: String
     let conversationId: String
     let senderId: String
-    var text: String // mutable for "delete for everyone"
+    var text: String // mutable for "delete for everyone" and editing
     let createdAt: Date
     var status: String // sending, sent, delivered, read
     var deliveredTo: [String] // Array of user IDs who have received the message
     var readBy: [String] // Array of user IDs who have read the message
     var deletedBy: [String]? // Array of user IDs who have deleted this message
     var deletedForEveryone: Bool? // Flag indicating message was deleted for everyone
+    var editedAt: Date? // Timestamp when message was last edited
+    var editHistory: [String]? // Array of previous message text versions (optional)
 
-    init(id: String, conversationId: String, senderId: String, text: String, createdAt: Date, status: String = "sent", deliveredTo: [String] = [], readBy: [String] = [], deletedBy: [String]? = nil, deletedForEveryone: Bool? = nil) {
+    init(id: String, conversationId: String, senderId: String, text: String, createdAt: Date, status: String = "sent", deliveredTo: [String] = [], readBy: [String] = [], deletedBy: [String]? = nil, deletedForEveryone: Bool? = nil, editedAt: Date? = nil, editHistory: [String]? = nil) {
         self.id = id
         self.conversationId = conversationId
         self.senderId = senderId
@@ -915,6 +919,8 @@ struct Message: Identifiable, Codable, Hashable {
         self.readBy = readBy
         self.deletedBy = deletedBy
         self.deletedForEveryone = deletedForEveryone
+        self.editedAt = editedAt
+        self.editHistory = editHistory
     }
     
     // Helper to determine overall status for UI display
