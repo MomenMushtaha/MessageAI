@@ -1011,6 +1011,12 @@ struct MessageBubbleRow: View, Equatable {
                     }
                     .padding(.leading, 12)
                 }
+
+                // Reactions display
+                if let reactions = message.reactions, !reactions.isEmpty {
+                    reactionsView(reactions: reactions)
+                        .padding(isFromCurrentUser ? .trailing : .leading, 12)
+                }
             }
             
             if !isFromCurrentUser {
@@ -1055,10 +1061,31 @@ struct MessageBubbleRow: View, Equatable {
     }
     
     @ViewBuilder
+    private func reactionsView(reactions: [String: [String]]) -> some View {
+        HStack(spacing: 4) {
+            ForEach(reactions.keys.sorted(), id: \.self) { emoji in
+                if let userIds = reactions[emoji], !userIds.isEmpty {
+                    HStack(spacing: 2) {
+                        Text(emoji)
+                            .font(.system(size: 14))
+                        Text("\(userIds.count)")
+                            .font(.system(size: 11))
+                            .foregroundColor(.secondary)
+                    }
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Color(.systemGray6))
+                    .cornerRadius(10)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
     private var statusIcon: some View {
         // Use cached status for performance, fallback to computation if not cached
         let displayStatus = statusCache[message.id] ?? message.displayStatus(for: conversation, currentUserId: currentUserId)
-        
+
         switch displayStatus {
         case "sending":
             ProgressView()
