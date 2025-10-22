@@ -40,6 +40,11 @@ struct ConversationDetailView: View {
     
     var body: some View {
         VStack(spacing: 0) {
+            // Search bar (appears when searching)
+            if isSearching {
+                searchBar
+            }
+
             // Messages List
             ZStack(alignment: .bottomTrailing) {
                 ScrollViewReader { proxy in
@@ -168,15 +173,32 @@ struct ConversationDetailView: View {
             }
             
             ToolbarItem(placement: .navigationBarTrailing) {
-                Menu {
-                    Button(role: .destructive, action: {
-                        showClearHistoryAlert = true
+                HStack(spacing: 12) {
+                    // Search button
+                    Button(action: {
+                        isSearching.toggle()
+                        if !isSearching {
+                            // Clear search when closing
+                            searchText = ""
+                            searchResults = []
+                            currentSearchIndex = 0
+                        }
                     }) {
-                        Label("Clear Chat History", systemImage: "trash")
+                        Image(systemName: isSearching ? "xmark" : "magnifyingglass")
+                            .foregroundStyle(.blue)
                     }
-                } label: {
-                    Image(systemName: "ellipsis.circle")
-                        .foregroundStyle(.blue)
+
+                    // Menu
+                    Menu {
+                        Button(role: .destructive, action: {
+                            showClearHistoryAlert = true
+                        }) {
+                            Label("Clear Chat History", systemImage: "trash")
+                        }
+                    } label: {
+                        Image(systemName: "ellipsis.circle")
+                            .foregroundStyle(.blue)
+                    }
                 }
             }
         }
@@ -379,6 +401,39 @@ struct ConversationDetailView: View {
             .padding()
             .background(Color(.systemBackground))
         }
+    }
+
+    private var searchBar: some View {
+        HStack(spacing: 12) {
+            // Search text field
+            HStack {
+                Image(systemName: "magnifyingglass")
+                    .foregroundColor(.secondary)
+                    .font(.system(size: 14))
+
+                TextField("Search messages", text: $searchText)
+                    .textFieldStyle(PlainTextFieldStyle())
+                    .autocorrectionDisabled()
+
+                if !searchText.isEmpty {
+                    Button(action: {
+                        searchText = ""
+                        searchResults = []
+                        currentSearchIndex = 0
+                    }) {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundColor(.secondary)
+                            .font(.system(size: 14))
+                    }
+                }
+            }
+            .padding(8)
+            .background(Color(.systemGray6))
+            .cornerRadius(10)
+        }
+        .padding(.horizontal)
+        .padding(.vertical, 8)
+        .background(Color(.systemBackground))
     }
 
     private func saveEditedMessage() {
