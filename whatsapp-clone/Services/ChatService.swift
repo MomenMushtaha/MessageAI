@@ -45,6 +45,9 @@ class ChatService: ObservableObject {
                 )
             }
             
+            // Cache all users for faster subsequent access
+            CacheManager.shared.cacheUsers(allUsers)
+            
             print("✅ Fetched \(allUsers.count) users")
         } catch {
             print("❌ Error fetching users: \(error.localizedDescription)")
@@ -72,8 +75,10 @@ class ChatService: ObservableObject {
                     return
                 }
                 
-                Task { @MainActor in
-                    self.conversations = documents.compactMap { doc -> Conversation? in
+                Task { @MainActor [weak self] in
+                    guard let self = self else { return }
+                    
+                    let conversations = documents.compactMap { doc -> Conversation? in
                         let data = doc.data()
                         
                         return Conversation(
@@ -88,7 +93,12 @@ class ChatService: ObservableObject {
                         )
                     }
                     
-                    print("✅ Loaded \(self.conversations.count) conversations")
+                    // Only update if changed to prevent unnecessary re-renders
+                    if conversations.count != self.conversations.count ||
+                       conversations.first?.lastMessageAt != self.conversations.first?.lastMessageAt {
+                        self.conversations = conversations
+                        print("✅ Loaded \(conversations.count) conversations")
+                    }
                 }
             }
     }
@@ -479,13 +489,19 @@ class ChatService: ObservableObject {
     // MARK: - Get User
     
     func getUser(userId: String) async throws -> User? {
+        // Check cache first for better performance
+        if let cachedUser = CacheManager.shared.getCachedUser(id: userId) {
+            return cachedUser
+        }
+        
+        // If not in cache, fetch from Firestore
         let doc = try await db.collection("users").document(userId).getDocument()
         
         guard let data = doc.data() else {
             return nil
         }
         
-        return User(
+        let user = User(
             id: data["id"] as? String ?? userId,
             displayName: data["displayName"] as? String ?? "Unknown",
             email: data["email"] as? String ?? "",
@@ -494,6 +510,11 @@ class ChatService: ObservableObject {
             isOnline: data["isOnline"] as? Bool ?? false,
             lastSeen: (data["lastSeen"] as? Timestamp)?.dateValue()
         )
+        
+        // Cache for future use
+        CacheManager.shared.cacheUser(user)
+        
+        return user
     }
     
     // MARK: - Sync Pending Messages

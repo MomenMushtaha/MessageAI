@@ -138,6 +138,11 @@ class AuthService: ObservableObject {
             isAuthenticated = false
             errorMessage = nil
             
+            // Clear all caches for memory efficiency
+            Task { @MainActor in
+                CacheManager.shared.clearAllCaches()
+            }
+            
         } catch let error as NSError {
             errorMessage = "Failed to logout: \(error.localizedDescription)"
             throw error

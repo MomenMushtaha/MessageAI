@@ -67,6 +67,7 @@ struct ChatListView: View {
                         }
                         .animation(.spring(response: 0.3, dampingFraction: 0.8), value: chatService.conversations.count)
                     }
+                    .scrollDismissesKeyboard(.interactively) // Better UX
                 }
             }
             .navigationTitle("Chats")
@@ -208,10 +209,19 @@ struct ChatListView: View {
     }
 }
 
-struct ConversationRow: View {
+struct ConversationRow: View, Equatable {
     let conversation: Conversation
     let currentUserId: String
     let otherUser: User?
+    
+    // Equatable conformance for performance optimization
+    static func == (lhs: ConversationRow, rhs: ConversationRow) -> Bool {
+        lhs.conversation.id == rhs.conversation.id &&
+        lhs.conversation.lastMessageText == rhs.conversation.lastMessageText &&
+        lhs.conversation.lastMessageAt == rhs.conversation.lastMessageAt &&
+        lhs.otherUser?.id == rhs.otherUser?.id &&
+        lhs.otherUser?.isOnline == rhs.otherUser?.isOnline
+    }
     
     var body: some View {
         HStack(spacing: 12) {

@@ -53,6 +53,7 @@ struct ConversationDetailView: View {
                         }
                         .padding()
                     }
+                    .scrollDismissesKeyboard(.interactively) // Better UX
                     .onChange(of: currentMessages.count) { oldValue, newValue in
                         if newValue > oldValue, let lastMessage = currentMessages.last {
                             withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
@@ -393,12 +394,20 @@ struct ConversationDetailView: View {
     }
 }
 
-struct MessageBubbleRow: View {
+struct MessageBubbleRow: View, Equatable {
     let message: Message
     let isFromCurrentUser: Bool
     let senderName: String?
     let conversation: Conversation
     let currentUserId: String
+    
+    // Equatable conformance for performance optimization
+    static func == (lhs: MessageBubbleRow, rhs: MessageBubbleRow) -> Bool {
+        lhs.message.id == rhs.message.id &&
+        lhs.message.status == rhs.message.status &&
+        lhs.message.text == rhs.message.text &&
+        lhs.senderName == rhs.senderName
+    }
     
     var body: some View {
         HStack(alignment: .bottom, spacing: 8) {
