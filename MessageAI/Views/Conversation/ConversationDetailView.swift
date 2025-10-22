@@ -414,6 +414,9 @@ struct ConversationDetailView: View {
                 TextField("Search messages", text: $searchText)
                     .textFieldStyle(PlainTextFieldStyle())
                     .autocorrectionDisabled()
+                    .onChange(of: searchText) { oldValue, newValue in
+                        performSearch()
+                    }
 
                 if !searchText.isEmpty {
                     Button(action: {
@@ -434,6 +437,25 @@ struct ConversationDetailView: View {
         .padding(.horizontal)
         .padding(.vertical, 8)
         .background(Color(.systemBackground))
+    }
+
+    private func performSearch() {
+        guard !searchText.isEmpty else {
+            searchResults = []
+            currentSearchIndex = 0
+            return
+        }
+
+        // Search messages using ChatService
+        searchResults = chatService.searchMessages(
+            conversationId: conversation.id,
+            query: searchText
+        )
+
+        // Reset to first result
+        currentSearchIndex = 0
+
+        print("🔍 Search updated: \(searchResults.count) results for '\(searchText)'")
     }
 
     private func saveEditedMessage() {
