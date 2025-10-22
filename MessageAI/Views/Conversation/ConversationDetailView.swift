@@ -37,6 +37,10 @@ struct ConversationDetailView: View {
     @State private var searchResults: [Message] = [] // Filtered search results
     @State private var currentSearchIndex = 0 // Current result index for navigation
     @State private var searchDebounceTask: Task<Void, Never>? // Debounce task for search
+    @State private var typingUsers: [TypingStatus] = [] // Users currently typing
+    @State private var typingListener: ListenerRegistration? // Typing status listener
+    @State private var typingTimer: Timer? // Auto-stop typing timer
+    @State private var isCurrentUserTyping = false // Track if current user is typing
     @Environment(\.dismiss) private var dismiss
     
     var body: some View {
