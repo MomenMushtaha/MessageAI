@@ -8,11 +8,13 @@
 import SwiftUI
 
 struct ChatListView: View {
+    @ObservedObject var authService = AuthService.shared
     @State private var searchText = ""
     @State private var showingNewChat = false
     @State private var selectedConversation: Conversation?
+    @State private var showLogoutConfirmation = false
     
-    // Mock data for now
+    // Mock data for now (will be replaced with real data in Step 3)
     private let mockConversations: [Conversation] = [
         Conversation(
             id: "1",
@@ -37,8 +39,6 @@ struct ChatListView: View {
             lastMessageAt: Date().addingTimeInterval(-86400)
         )
     ]
-    
-    var onLogout: () -> Void
     
     var body: some View {
         NavigationStack {
@@ -85,9 +85,12 @@ struct ChatListView: View {
             .navigationBarTitleDisplayMode(.large)
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
-                    Button(action: onLogout) {
-                        Text("Logout")
-                            .foregroundStyle(.red)
+                    Button(action: { showLogoutConfirmation = true }) {
+                        HStack(spacing: 4) {
+                            Image(systemName: "rectangle.portrait.and.arrow.right")
+                            Text("Logout")
+                        }
+                        .foregroundStyle(.red)
                     }
                 }
                 
@@ -104,6 +107,20 @@ struct ChatListView: View {
             .navigationDestination(item: $selectedConversation) { conversation in
                 ConversationDetailView(conversation: conversation)
             }
+            .confirmationDialog("Are you sure you want to logout?", isPresented: $showLogoutConfirmation, titleVisibility: .visible) {
+                Button("Logout", role: .destructive) {
+                    handleLogout()
+                }
+                Button("Cancel", role: .cancel) {}
+            }
+        }
+    }
+    
+    private func handleLogout() {
+        do {
+            try authService.logout()
+        } catch {
+            print("Logout error: \(error.localizedDescription)")
         }
     }
     
@@ -198,6 +215,6 @@ struct NewChatPlaceholderView: View {
 }
 
 #Preview {
-    ChatListView(onLogout: {})
+    ChatListView()
 }
 

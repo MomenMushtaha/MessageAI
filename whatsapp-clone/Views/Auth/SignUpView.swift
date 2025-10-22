@@ -8,13 +8,14 @@
 import SwiftUI
 
 struct SignUpView: View {
+    @ObservedObject var authService = AuthService.shared
     @State private var displayName = ""
     @State private var email = ""
     @State private var password = ""
     @State private var confirmPassword = ""
     @State private var isLoading = false
+    @State private var showError = false
     
-    var onSignUp: () -> Void
     var onShowLogin: () -> Void
     
     var body: some View {
@@ -72,13 +73,19 @@ struct SignUpView: View {
                     }
                 }
                 
+                // Error Message
+                if let errorMessage = authService.errorMessage {
+                    Text(errorMessage)
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal)
+                }
+                
                 // Sign Up Button
                 Button(action: {
-                    isLoading = true
-                    // Simulate signup delay
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                        isLoading = false
-                        onSignUp()
+                    Task {
+                        await handleSignUp()
                     }
                 }) {
                     HStack {
@@ -125,9 +132,22 @@ struct SignUpView: View {
         password == confirmPassword &&
         password.count >= 6
     }
+    
+    private func handleSignUp() async {
+        isLoading = true
+        authService.errorMessage = nil
+        
+        do {
+            try await authService.signUp(email: email, password: password, displayName: displayName)
+        } catch {
+            showError = true
+        }
+        
+        isLoading = false
+    }
 }
 
 #Preview {
-    SignUpView(onSignUp: {}, onShowLogin: {})
+    SignUpView(onShowLogin: {})
 }
 

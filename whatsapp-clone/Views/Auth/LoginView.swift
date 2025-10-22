@@ -8,11 +8,12 @@
 import SwiftUI
 
 struct LoginView: View {
+    @ObservedObject var authService = AuthService.shared
     @State private var email = ""
     @State private var password = ""
     @State private var isLoading = false
+    @State private var showError = false
     
-    var onLogin: () -> Void
     var onShowSignUp: () -> Void
     
     var body: some View {
@@ -51,13 +52,19 @@ struct LoginView: View {
                         .cornerRadius(10)
                 }
                 
+                // Error Message
+                if let errorMessage = authService.errorMessage {
+                    Text(errorMessage)
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal)
+                }
+                
                 // Login Button
                 Button(action: {
-                    isLoading = true
-                    // Simulate login delay
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                        isLoading = false
-                        onLogin()
+                    Task {
+                        await handleLogin()
                     }
                 }) {
                     HStack {
@@ -96,9 +103,22 @@ struct LoginView: View {
             .navigationBarHidden(true)
         }
     }
+    
+    private func handleLogin() async {
+        isLoading = true
+        authService.errorMessage = nil
+        
+        do {
+            try await authService.login(email: email, password: password)
+        } catch {
+            showError = true
+        }
+        
+        isLoading = false
+    }
 }
 
 #Preview {
-    LoginView(onLogin: {}, onShowSignUp: {})
+    LoginView(onShowSignUp: {})
 }
 

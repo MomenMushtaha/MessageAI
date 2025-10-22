@@ -9,51 +9,39 @@ import SwiftUI
 import SwiftData
 
 struct MainAppView: View {
-    // Mock authentication state (will be replaced with real AuthService in Step 2)
-    @State private var isAuthenticated = false
+    @StateObject private var authService = AuthService.shared
     @State private var showSignUp = false
     
     var body: some View {
         Group {
-            if isAuthenticated {
+            if authService.isAuthenticated {
                 // Show Chat List when authenticated
-                ChatListView(onLogout: {
-                    withAnimation {
-                        isAuthenticated = false
-                    }
-                })
+                ChatListView()
             } else {
                 // Show Login/SignUp flow
                 if showSignUp {
                     SignUpView(
-                        onSignUp: {
-                            withAnimation {
-                                isAuthenticated = true
-                                showSignUp = false
-                            }
-                        },
                         onShowLogin: {
                             withAnimation {
                                 showSignUp = false
                             }
                         }
                     )
+                    .transition(.move(edge: .trailing))
                 } else {
                     LoginView(
-                        onLogin: {
-                            withAnimation {
-                                isAuthenticated = true
-                            }
-                        },
                         onShowSignUp: {
                             withAnimation {
                                 showSignUp = true
                             }
                         }
                     )
+                    .transition(.move(edge: .leading))
                 }
             }
         }
+        .animation(.easeInOut, value: authService.isAuthenticated)
+        .animation(.easeInOut, value: showSignUp)
     }
 }
 
