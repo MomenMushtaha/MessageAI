@@ -1,0 +1,488 @@
+---
+alwaysApply: true
+---
+
+# MessageAI WhatsApp Clone - Incremental MVP Plan
+
+## Core Principle
+Each step below produces a **buildable, runnable, and testable** app in Xcode. No step should break the build. Test on simulator after completing each step before moving to the next.
+
+---
+
+## ✅ Step 0: Foundation (COMPLETED)
+**Status:** ✅ Done
+**What exists:**
+- Firebase SDK integrated (Auth, Firestore, Messaging, Analytics)
+- Firebase initialized with offline persistence
+- GoogleService-Info.plist configured
+- iOS deployment target: iOS 17.0
+- SwiftData setup with Message model
+
+**Verification:** ✅ App builds successfully
+
+---
+
+## 📱 Step 1: Basic UI Structure & Navigation
+**Goal:** Create empty screens with navigation flow
+
+**Implementation:**
+1. Create `Models/User.swift` - basic user model (id, displayName, email, avatarURL)
+2. Create `Models/Conversation.swift` - conversation model (id, title, participants, lastMessage, timestamp)
+3. Create `Views/Auth/LoginView.swift` - email/password input fields + login button (no logic yet)
+4. Create `Views/Auth/SignUpView.swift` - name, email, password fields + signup button (no logic yet)
+5. Create `Views/ChatList/ChatListView.swift` - empty list with navigation bar + "New Chat" button
+6. Create `Views/Conversation/ConversationDetailView.swift` - empty conversation with message input field
+7. Update `MainAppView.swift` - show LoginView vs ChatListView based on mock auth state
+8. Add navigation: ChatList → ConversationDetail
+
+**Testable:** 
+- ✅ Navigate between all screens
+- ✅ UI renders correctly
+- ✅ No crashes
+
+**Expected Output:** Clickable prototype with all main screens, no backend functionality
+
+---
+
+## 🔐 Step 2: Firebase Authentication
+**Goal:** Real user signup, login, logout with Firebase
+
+**Implementation:**
+1. Create `Services/AuthService.swift`
+   - `signUp(email:password:displayName:) async throws`
+   - `login(email:password:) async throws`
+   - `logout() throws`
+   - `@Published var currentUser: User?`
+   - Listen to `Auth.auth().addStateDidChangeListener`
+2. Create Firestore `users/{userId}` collection on signup
+   - Store: userId, email, displayName, createdAt
+3. Update LoginView - wire up AuthService.login()
+4. Update SignUpView - wire up AuthService.signUp()
+5. Update MainAppView - use AuthService.currentUser to show Login vs ChatList
+6. Add "Logout" button in ChatListView navigation bar
+
+**Testable:**
+- ✅ Create account with email/password
+- ✅ Login with created account
+- ✅ Logout returns to login screen
+- ✅ User document created in Firestore
+- ✅ State persists across app restarts (Firebase handles this)
+
+**Expected Output:** Working authentication, users stored in Firestore
+
+---
+
+## 💬 Step 3: One-to-One Messaging (Real-time)
+**Goal:** Send and receive text messages between two users in real-time
+
+**Implementation:**
+1. Create `Services/ChatService.swift`
+   - `sendMessage(conversationId:text:) async throws` - writes to Firestore
+   - `observeMessages(conversationId:) -> AsyncStream<[Message]>` - Firestore listener
+   - Firestore structure:
+     ```
+     conversations/{conversationId}
+       - participantIds: [userId1, userId2]
+       - lastMessageText: String
+       - lastMessageAt: Timestamp
+       - createdAt: Timestamp
+     
+     conversations/{conversationId}/messages/{messageId}
+       - senderId: String
+       - text: String
+       - createdAt: Timestamp
+       - status: String (sending, sent, delivered, read)
+     ```
+2. Create `Views/ChatList/NewChatView.swift`
+   - List all users from Firestore `users` collection
+   - Tap user → create/find conversation → navigate to ConversationDetailView
+   - Create conversation with deterministic ID: `sorted([userId1, userId2]).joined(separator: "_")`
+3. Update `ChatListView.swift`
+   - Firestore listener for conversations where currentUser.id in participantIds
+   - Display conversation rows (avatar, name, last message, timestamp)
+   - Tap row → navigate to ConversationDetailView
+4. Update `ConversationDetailView.swift`
+   - Firestore listener for messages subcollection
+   - Display message bubbles (sender name, text, timestamp)
+   - Message input field + send button
+   - Scroll to bottom on new messages
+5. Create `Components/MessageBubble.swift` - reusable message bubble (left/right aligned)
+
+**Testable:**
+- ✅ Create two accounts (User A, User B)
+- ✅ User A starts chat with User B
+- ✅ User A sends message → User B sees it instantly
+- ✅ User B replies → User A sees it instantly
+- ✅ Messages persist in Firestore
+- ✅ Conversation appears in both users' chat lists
+
+**Expected Output:** Fully functional 1-on-1 real-time messaging
+
+---
+
+## 📦 Step 4: SwiftData Local Persistence & Offline Support
+**Goal:** Messages load instantly from local cache, work offline
+
+**Implementation:**
+1. Create `Models/LocalMessage.swift` (SwiftData)
+   - Properties: id, conversationId, senderId, text, createdAt, status, isSynced
+   - Add to ModelContainer schema
+2. Create `Models/LocalConversation.swift` (SwiftData)
+   - Properties: id, title, participantIds, lastMessageText, lastMessageAt, isSynced
+   - Add to ModelContainer schema
+3. Update `ChatService.swift`
+   - `sendMessage()`: Write to SwiftData immediately (status: sending), then Firestore
+   - On Firestore success: update status to "sent"
+   - On Firestore failure: status stays "sending", retry later
+   - `observeMessages()`: Load from SwiftData first (instant), then merge Firestore updates
+4. Add sync logic:
+   - On app launch: upload pending messages (status: sending)
+   - Firestore listener updates → save to SwiftData
+5. Add network status banner:
+   - Use `NWPathMonitor` to detect connectivity
+   - Show "No Connection" banner when offline
+
+**Testable:**
+- ✅ Send message while online → appears instantly
+- ✅ Enable airplane mode → send message → shows "sending" status
+- ✅ Disable airplane mode → message syncs to Firestore
+- ✅ Force quit app → relaunch → messages load instantly from SwiftData
+- ✅ Close and reopen conversation → messages still there
+
+**Expected Output:** Offline-first messaging with local persistence
+
+---
+
+## 👥 Step 5: Group Chats
+**Goal:** Support multi-user group conversations
+
+**Implementation:**
+1. Update Firestore `conversations` collection:
+   - Add `type: String` (direct/group)
+   - Add `groupName: String?`
+   - Add `groupAvatarURL: String?`
+   - participantIds becomes array of 2+ users for groups
+2. Create `Views/ChatList/NewGroupView.swift`
+   - Multi-select user list
+   - Group name input field
+   - "Create Group" button
+   - Create conversation with type: "group", random conversationId
+3. Update `ChatListView.swift`
+   - Show group icon/avatar for group chats
+   - Display group name instead of participant name
+4. Update `ConversationDetailView.swift`
+   - Show group name in navigation bar
+   - Display sender name above each message (for groups)
+   - Show participant list (tap nav bar)
+5. Update `ChatService.sendMessage()`
+   - Handle group conversations (no changes needed if done right)
+
+**Testable:**
+- ✅ Create group with 3+ users
+- ✅ All participants see the group in chat list
+- ✅ Send message in group → all participants receive it
+- ✅ Each message shows sender name
+- ✅ View group participant list
+
+**Expected Output:** Working group chat functionality
+
+---
+
+## ✓ Step 6: Message Status & Read Receipts
+**Goal:** Show message delivery status (sent, delivered, read) and read receipts
+
+**Implementation:**
+1. Update Firestore `messages` document:
+   - Add `deliveredTo: [String]` - array of userIds who received message
+   - Add `readBy: [String]` - array of userIds who read message
+2. Update `ChatService.swift`
+   - When opening conversation: mark all messages as read
+     - Update `readBy` array in Firestore for unread messages
+   - When receiving message: mark as delivered
+     - Update `deliveredTo` array in Firestore
+3. Update `ConversationDetailView.swift`
+   - On appear: mark messages as read
+   - On receive new message: mark as delivered
+4. Create `Components/MessageStatusIcon.swift`
+   - Single checkmark: sent (message exists in Firestore)
+   - Double checkmark: delivered (in deliveredTo for all recipients)
+   - Blue double checkmark: read (in readBy for all recipients)
+5. Update `MessageBubble.swift` - show status icon for sent messages
+6. Update `LocalMessage` model - add deliveredTo, readBy fields
+
+**Testable:**
+- ✅ Send message → shows single checkmark
+- ✅ Recipient opens app → sender sees double checkmark
+- ✅ Recipient opens conversation → sender sees blue double checkmark
+- ✅ Group messages show delivered when all participants received
+
+**Expected Output:** WhatsApp-style message status indicators
+
+---
+
+## 🟢 Step 7: User Presence (Online/Offline Status)
+**Goal:** Show when users are online/offline with "last seen" timestamp
+
+**Implementation:**
+1. Create `Services/PresenceService.swift`
+   - Update Firestore `users/{userId}/presence`:
+     - `isOnline: Bool`
+     - `lastSeen: Timestamp`
+   - On app foreground: set isOnline = true
+   - On app background: set isOnline = false, update lastSeen
+   - Heartbeat every 30 seconds while active
+2. Update `User.swift` model - add isOnline, lastSeen properties
+3. Update `ConversationDetailView.swift`
+   - Show "Online" or "Last seen [time]" in navigation subtitle
+   - For groups: show "X participants"
+4. Update `ChatListView.swift`
+   - Show green dot on avatar if user isOnline
+5. Initialize PresenceService in app init
+
+**Testable:**
+- ✅ User A online → User B sees "Online" status
+- ✅ User A backgrounds app → User B sees "Last seen [time]"
+- ✅ User A force quits → User B sees last seen timestamp
+- ✅ Green dot appears on online users in chat list
+
+**Expected Output:** Real-time presence indicators
+
+---
+
+## 🔔 Step 8: In-App Foreground Notifications (No APNs)
+**Goal:** Show notification banner when receiving message while app is open
+
+**Implementation:**
+1. Create `Services/NotificationService.swift`
+   - `showInAppNotification(title:body:avatar:)` - displays banner
+   - Use `UNUserNotificationCenter` for local notifications
+   - Request notification permission on first launch
+2. Create `Components/InAppNotificationBanner.swift`
+   - Custom SwiftUI overlay banner
+   - Shows sender avatar, name, message preview
+   - Tap to open conversation
+   - Auto-dismiss after 4 seconds
+   - Slide-in animation from top
+3. Update `ChatService.swift`
+   - When receiving new message via Firestore listener:
+     - If conversation is NOT currently open → show notification
+     - If app in foreground and conversation ≠ current → show banner
+4. Update `MainAppView.swift`
+   - Add `.overlay()` for notification banner at top
+   - Manage banner state with `@State var currentNotification`
+
+**Key:** This uses **local notifications** triggered by Firestore listeners, NO network push needed, NO APNs certificate required, works on simulator.
+
+**Testable:**
+- ✅ User A sends message to User B
+- ✅ User B has app open but viewing different conversation → sees banner
+- ✅ User B taps banner → navigates to conversation with User A
+- ✅ User B is viewing conversation with User A → no banner (already there)
+- ✅ Works on simulator without developer account
+
+**Expected Output:** In-app notification banners for incoming messages
+
+---
+
+## 🎨 Step 9: UI Polish & Animations
+**Goal:** Make UI feel polished and smooth
+
+**Implementation:**
+1. Add smooth animations:
+   - Message send animation (slide up + fade in)
+   - Typing indicator (animated dots)
+   - Pull-to-refresh conversations
+   - Swipe gestures on conversation rows
+2. Improve message bubbles:
+   - Rounded corners (more like WhatsApp)
+   - Tails on bubbles
+   - Message grouping (same sender consecutive messages)
+   - Timestamp only on last message in group
+3. Add loading states:
+   - Skeleton screens while loading conversations
+   - Spinner while sending message
+   - "Connecting..." indicator when offline
+4. Improve conversation view:
+   - Sticky date headers
+   - Scroll-to-bottom button (when scrolled up)
+   - Auto-scroll on new message
+5. Add avatars everywhere:
+   - User avatars in chat list
+   - Group avatars (composite or emoji)
+   - Message sender avatars in groups
+6. Improve chat list:
+   - Unread message count badges
+   - Bold text for unread conversations
+   - Swipe-to-delete conversation
+
+**Testable:**
+- ✅ Animations are smooth (60fps)
+- ✅ UI matches WhatsApp aesthetics
+- ✅ Loading states prevent confusion
+- ✅ App feels responsive
+
+**Expected Output:** Polished, professional-looking app
+
+---
+
+## 🧪 Step 10: Testing & Edge Cases
+**Goal:** Handle edge cases and ensure stability
+
+**Implementation:**
+1. Add error handling:
+   - Show alert on auth failure (wrong password, etc.)
+   - Handle network errors gracefully
+   - Retry failed messages with exponential backoff
+2. Add input validation:
+   - Email format validation
+   - Password strength requirements
+   - Empty message prevention
+   - Character limits on messages
+3. Add edge case handling:
+   - Empty states (no conversations, no messages)
+   - Long messages (text wrapping)
+   - Rapid message sending (prevent duplicates)
+   - Large chat lists (pagination/lazy loading)
+4. Add loading states:
+   - Skeleton loaders for chat list
+   - Progress indicators for auth
+5. Performance optimization:
+   - Limit initial message load (last 50 messages)
+   - Lazy load older messages on scroll up
+   - Debounce Firestore listeners
+6. Memory management:
+   - Cancel listeners on view disappear
+   - Clear caches appropriately
+
+**Testable:**
+- ✅ Send 100 messages rapidly → no duplicates or crashes
+- ✅ Poor network → shows proper error messages
+- ✅ Invalid email → shows validation error
+- ✅ Empty chat list → shows helpful empty state
+- ✅ Long conversation (500+ messages) → scrolls smoothly
+
+**Expected Output:** Stable, production-ready app
+
+---
+
+## 🚀 Step 11: Optional Enhancements (Post-MVP)
+**Not required for MVP, but nice to have:**
+
+1. **Media Attachments**
+   - Image picker + Firebase Storage upload
+   - Image thumbnails in chat
+   - Full-screen image viewer
+
+2. **Search**
+   - Search messages within conversation
+   - Search conversations by name
+
+3. **Message Reactions**
+   - Emoji reactions on messages
+   - Show reaction counts
+
+4. **Voice Messages**
+   - Record audio messages
+   - Playback with waveform
+
+5. **Push Notifications (Background)**
+   - Requires Apple Developer account
+   - APNs setup + Firebase Cloud Functions
+   - Background notification delivery
+
+---
+
+## 📋 Implementation Checklist
+
+After each step:
+- [ ] Build succeeds (⌘+B)
+- [ ] No compiler errors or warnings
+- [ ] Run on simulator - no crashes
+- [ ] Test new functionality manually
+- [ ] Git commit with descriptive message
+- [ ] Test existing features still work (regression test)
+
+---
+
+## 🏗️ Architecture Guidelines
+
+**Service Layer:**
+- AuthService (singleton, manages current user)
+- ChatService (handles Firestore messaging)
+- PresenceService (manages online status)
+- NotificationService (in-app banners)
+
+**Data Layer:**
+- Firestore (source of truth, real-time sync)
+- SwiftData (local cache, offline support)
+- Sync strategy: Firestore listeners → SwiftData → UI
+
+**UI Layer:**
+- SwiftUI views (reactive to @Published properties)
+- ViewModels where needed (complex state)
+- Reusable components (MessageBubble, UserRow, etc.)
+
+**Navigation:**
+- NavigationStack (iOS 17+)
+- Programmatic navigation for deep links
+- Sheet/fullScreenCover for modals
+
+---
+
+## 🎯 Success Criteria
+
+An MVP is complete when:
+1. ✅ Two users can create accounts
+2. ✅ Users can send/receive real-time messages
+3. ✅ Messages persist offline and sync when online
+4. ✅ Group chats work with 3+ users
+5. ✅ Read receipts and online status work
+6. ✅ In-app notifications show for new messages
+7. ✅ UI is polished and bug-free
+8. ✅ App is stable under normal use
+
+**Time Estimate:** 
+- Steps 1-3: ~2-3 hours
+- Steps 4-5: ~2-3 hours
+- Steps 6-7: ~2 hours
+- Steps 8-9: ~2-3 hours
+- Step 10: ~1-2 hours
+- **Total: ~10-15 hours of focused development**
+
+---
+
+## 🔧 Development Tips
+
+1. **Test as you go** - Don't skip testing steps
+2. **Commit often** - Commit after each working feature
+3. **Use print statements** - Debug Firestore listeners
+4. **Firestore Console** - Monitor database in real-time
+5. **Simulator side-by-side** - Test with 2 simulators for messaging
+6. **Network Link Conditioner** - Test offline scenarios
+7. **Xcode Previews** - Use for UI components
+8. **Breakpoints** - Debug async code carefully
+
+---
+
+## 📱 Testing Strategy
+
+**Multi-device testing:**
+1. Run 2 simulators side-by-side (User A & User B)
+2. Create account on each
+3. Test messaging flow
+4. Test offline on one device
+
+**Scenarios to test:**
+- ✅ Happy path: signup → send message → receive message
+- ✅ Offline send → reconnect → sync
+- ✅ Force quit → relaunch → messages persist
+- ✅ Group chat with 3 people
+- ✅ Rapid message sending (20+ messages)
+- ✅ Long message text (500+ characters)
+- ✅ Empty states (new user, no conversations)
+
+**Performance benchmarks:**
+- Message send latency: <500ms on wifi
+- UI rendering: 60fps scrolling
+- Cold start: <2 seconds to chat list
+- Message sync: <1 second after reconnect
