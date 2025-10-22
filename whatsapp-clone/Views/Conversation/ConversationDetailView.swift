@@ -9,39 +9,62 @@ import SwiftUI
 
 struct ConversationDetailView: View {
     let conversation: Conversation
+    let otherUser: User?
+    
+    @ObservedObject var authService = AuthService.shared
+    @ObservedObject var chatService = ChatService.shared
     @State private var messageText = ""
-    @State private var messages: [MockMessage] = []
+    @State private var isSending = false
     @Environment(\.dismiss) private var dismiss
     
     var body: some View {
         VStack(spacing: 0) {
             // Messages List
-            ScrollView {
-                LazyVStack(spacing: 12) {
-                    if messages.isEmpty {
-                        emptyMessagesView
-                    } else {
-                        ForEach(messages) { message in
-                            MessageBubbleRow(message: message, isFromCurrentUser: message.isFromCurrentUser)
+            ScrollViewReader { proxy in
+                ScrollView {
+                    LazyVStack(spacing: 12) {
+                        if currentMessages.isEmpty {
+                            emptyMessagesView
+                        } else {
+                            ForEach(currentMessages) { message in
+                                MessageBubbleRow(
+                                    message: message,
+                                    isFromCurrentUser: message.senderId == authService.currentUser?.id,
+                                    senderName: getSenderName(for: message)
+                                )
+                                .id(message.id)
+                            }
+                        }
+                    }
+                    .padding()
+                }
+                .onChange(of: currentMessages.count) { oldValue, newValue in
+                    if newValue > oldValue, let lastMessage = currentMessages.last {
+                        withAnimation {
+                            proxy.scrollTo(lastMessage.id, anchor: .bottom)
                         }
                     }
                 }
-                .padding()
+                .onAppear {
+                    if let lastMessage = currentMessages.last {
+                        proxy.scrollTo(lastMessage.id, anchor: .bottom)
+                    }
+                }
             }
             
             // Message Input
             messageInputView
         }
-        .navigationTitle(conversation.type == .group ? (conversation.groupName ?? "Group") : "Contact")
+        .navigationTitle(displayTitle)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .principal) {
                 VStack(spacing: 2) {
-                    Text(conversation.type == .group ? (conversation.groupName ?? "Group") : "Contact")
+                    Text(displayTitle)
                         .font(.headline)
                     
                     if conversation.type == .direct {
-                        Text("Online")
+                        Text("Tap to view profile")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     } else {
@@ -53,7 +76,10 @@ struct ConversationDetailView: View {
             }
         }
         .onAppear {
-            loadMockMessages()
+            chatService.observeMessages(conversationId: conversation.id)
+        }
+        .onDisappear {
+            chatService.stopObservingMessages(conversationId: conversation.id)
         }
     }
     
@@ -92,71 +118,81 @@ struct ConversationDetailView: View {
             .cornerRadius(20)
             
             // Send Button
-            Button(action: sendMessage) {
-                Image(systemName: "arrow.up.circle.fill")
-                    .font(.system(size: 32))
-                    .foregroundStyle(messageText.isEmpty ? .gray : .blue)
+            Button(action: {
+                Task {
+                    await sendMessage()
+                }
+            }) {
+                if isSending {
+                    ProgressView()
+                        .frame(width: 32, height: 32)
+                } else {
+                    Image(systemName: "arrow.up.circle.fill")
+                        .font(.system(size: 32))
+                        .foregroundStyle(messageText.isEmpty ? .gray : .blue)
+                }
             }
-            .disabled(messageText.isEmpty)
+            .disabled(messageText.isEmpty || isSending)
         }
         .padding(.horizontal)
         .padding(.vertical, 8)
         .background(Color(.systemBackground))
     }
     
-    private func sendMessage() {
-        guard !messageText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-        
-        let newMessage = MockMessage(
-            id: UUID().uuidString,
-            text: messageText,
-            isFromCurrentUser: true,
-            timestamp: Date()
-        )
-        
-        messages.append(newMessage)
-        messageText = ""
-        
-        // Simulate response after 1 second
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
-            let responseMessage = MockMessage(
-                id: UUID().uuidString,
-                text: "Thanks for your message!",
-                isFromCurrentUser: false,
-                timestamp: Date()
-            )
-            messages.append(responseMessage)
+    private var currentMessages: [Message] {
+        chatService.messages[conversation.id] ?? []
+    }
+    
+    private var displayTitle: String {
+        if conversation.type == .group {
+            return conversation.groupName ?? "Group Chat"
+        } else {
+            return otherUser?.displayName ?? "Chat"
         }
     }
     
-    private func loadMockMessages() {
-        // Load some mock messages for demonstration
-        messages = [
-            MockMessage(
-                id: "1",
-                text: "Hey there!",
-                isFromCurrentUser: false,
-                timestamp: Date().addingTimeInterval(-3600)
-            ),
-            MockMessage(
-                id: "2",
-                text: "Hi! How are you?",
-                isFromCurrentUser: true,
-                timestamp: Date().addingTimeInterval(-3500)
-            ),
-            MockMessage(
-                id: "3",
-                text: "I'm doing great, thanks for asking!",
-                isFromCurrentUser: false,
-                timestamp: Date().addingTimeInterval(-3400)
+    private func getSenderName(for message: Message) -> String? {
+        guard conversation.type == .group else { return nil }
+        
+        if message.senderId == authService.currentUser?.id {
+            return "You"
+        }
+        
+        // For group chats, show sender name
+        // You could enhance this by fetching user names
+        return "User"
+    }
+    
+    private func sendMessage() async {
+        guard !messageText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              let currentUserId = authService.currentUser?.id else {
+            return
+        }
+        
+        let textToSend = messageText
+        messageText = ""
+        isSending = true
+        
+        do {
+            try await chatService.sendMessage(
+                conversationId: conversation.id,
+                senderId: currentUserId,
+                text: textToSend
             )
-        ]
+        } catch {
+            print("❌ Error sending message: \(error.localizedDescription)")
+            // Restore message text on error
+            messageText = textToSend
+        }
+        
+        isSending = false
     }
 }
 
 struct MessageBubbleRow: View {
-    let message: MockMessage
+    let message: Message
     let isFromCurrentUser: Bool
+    let senderName: String?
     
     var body: some View {
         HStack {
@@ -165,6 +201,14 @@ struct MessageBubbleRow: View {
             }
             
             VStack(alignment: isFromCurrentUser ? .trailing : .leading, spacing: 4) {
+                // Show sender name for group chats (incoming messages only)
+                if !isFromCurrentUser, let senderName = senderName {
+                    Text(senderName)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .padding(.leading, 12)
+                }
+                
                 Text(message.text)
                     .padding(.horizontal, 12)
                     .padding(.vertical, 8)
@@ -172,7 +216,7 @@ struct MessageBubbleRow: View {
                     .foregroundStyle(isFromCurrentUser ? .white : .primary)
                     .cornerRadius(16)
                 
-                Text(message.timestamp, style: .time)
+                Text(message.createdAt, style: .time)
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             }
@@ -184,14 +228,6 @@ struct MessageBubbleRow: View {
     }
 }
 
-// Mock message model for Step 1
-struct MockMessage: Identifiable {
-    let id: String
-    let text: String
-    let isFromCurrentUser: Bool
-    let timestamp: Date
-}
-
 #Preview {
     NavigationStack {
         ConversationDetailView(
@@ -199,6 +235,11 @@ struct MockMessage: Identifiable {
                 id: "1",
                 type: .direct,
                 participantIds: ["user1", "user2"]
+            ),
+            otherUser: User(
+                id: "user2",
+                displayName: "John Doe",
+                email: "john@example.com"
             )
         )
     }

@@ -47,5 +47,4 @@ struct MainAppView: View {
 
 #Preview {
     MainAppView()
-        .modelContainer(for: Message.self, inMemory: true)
 }

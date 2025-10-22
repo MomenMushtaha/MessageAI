@@ -9,36 +9,12 @@ import SwiftUI
 
 struct ChatListView: View {
     @ObservedObject var authService = AuthService.shared
+    @ObservedObject var chatService = ChatService.shared
     @State private var searchText = ""
     @State private var showingNewChat = false
-    @State private var selectedConversation: Conversation?
+    @State private var selectedConversationId: String?
     @State private var showLogoutConfirmation = false
-    
-    // Mock data for now (will be replaced with real data in Step 3)
-    private let mockConversations: [Conversation] = [
-        Conversation(
-            id: "1",
-            type: .direct,
-            participantIds: ["user1", "user2"],
-            lastMessageText: "Hey! How are you?",
-            lastMessageAt: Date().addingTimeInterval(-3600)
-        ),
-        Conversation(
-            id: "2",
-            type: .group,
-            participantIds: ["user1", "user3", "user4"],
-            lastMessageText: "See you tomorrow!",
-            lastMessageAt: Date().addingTimeInterval(-7200),
-            groupName: "Project Team"
-        ),
-        Conversation(
-            id: "3",
-            type: .direct,
-            participantIds: ["user1", "user5"],
-            lastMessageText: "Thanks for your help!",
-            lastMessageAt: Date().addingTimeInterval(-86400)
-        )
-    ]
+    @State private var conversationUsers: [String: User] = [:] // userId -> User
     
     var body: some View {
         NavigationStack {
@@ -63,16 +39,20 @@ struct ChatListView: View {
                 .padding()
                 
                 // Conversations List
-                if mockConversations.isEmpty {
+                if chatService.conversations.isEmpty {
                     emptyStateView
                 } else {
                     ScrollView {
                         LazyVStack(spacing: 0) {
-                            ForEach(mockConversations) { conversation in
-                                ConversationRow(conversation: conversation)
-                                    .onTapGesture {
-                                        selectedConversation = conversation
-                                    }
+                            ForEach(filteredConversations) { conversation in
+                                ConversationRow(
+                                    conversation: conversation,
+                                    currentUserId: authService.currentUser?.id ?? "",
+                                    otherUser: getOtherUser(for: conversation)
+                                )
+                                .onTapGesture {
+                                    selectedConversationId = conversation.id
+                                }
                                 
                                 Divider()
                                     .padding(.leading, 76)
@@ -102,10 +82,17 @@ struct ChatListView: View {
                 }
             }
             .sheet(isPresented: $showingNewChat) {
-                NewChatPlaceholderView()
+                NewChatView(onConversationCreated: { conversationId in
+                    selectedConversationId = conversationId
+                })
             }
-            .navigationDestination(item: $selectedConversation) { conversation in
-                ConversationDetailView(conversation: conversation)
+            .navigationDestination(item: $selectedConversationId) { conversationId in
+                if let conversation = chatService.conversations.first(where: { $0.id == conversationId }) {
+                    ConversationDetailView(
+                        conversation: conversation,
+                        otherUser: getOtherUser(for: conversation)
+                    )
+                }
             }
             .confirmationDialog("Are you sure you want to logout?", isPresented: $showLogoutConfirmation, titleVisibility: .visible) {
                 Button("Logout", role: .destructive) {
@@ -113,7 +100,60 @@ struct ChatListView: View {
                 }
                 Button("Cancel", role: .cancel) {}
             }
+            .onAppear {
+                startObservingConversations()
+            }
+            .onDisappear {
+                chatService.stopObservingConversations()
+            }
         }
+    }
+    
+    private var filteredConversations: [Conversation] {
+        if searchText.isEmpty {
+            return chatService.conversations
+        } else {
+            return chatService.conversations.filter { conversation in
+                if conversation.type == .group {
+                    return conversation.groupName?.localizedCaseInsensitiveContains(searchText) ?? false
+                } else {
+                    let otherUser = getOtherUser(for: conversation)
+                    return otherUser?.displayName.localizedCaseInsensitiveContains(searchText) ?? false
+                }
+            }
+        }
+    }
+    
+    private func getOtherUser(for conversation: Conversation) -> User? {
+        guard conversation.type == .direct,
+              let currentUserId = authService.currentUser?.id else {
+            return nil
+        }
+        
+        let otherUserId = conversation.participantIds.first { $0 != currentUserId }
+        
+        guard let otherUserId = otherUserId else { return nil }
+        
+        // Return cached user if available
+        if let cachedUser = conversationUsers[otherUserId] {
+            return cachedUser
+        }
+        
+        // Fetch user asynchronously
+        Task {
+            if let user = try? await chatService.getUser(userId: otherUserId) {
+                await MainActor.run {
+                    conversationUsers[otherUserId] = user
+                }
+            }
+        }
+        
+        return nil
+    }
+    
+    private func startObservingConversations() {
+        guard let currentUserId = authService.currentUser?.id else { return }
+        chatService.observeConversations(userId: currentUserId)
     }
     
     private func handleLogout() {
@@ -149,6 +189,8 @@ struct ChatListView: View {
 
 struct ConversationRow: View {
     let conversation: Conversation
+    let currentUserId: String
+    let otherUser: User?
     
     var body: some View {
         HStack(spacing: 12) {
@@ -157,14 +199,23 @@ struct ConversationRow: View {
                 .fill(conversation.type == .group ? Color.purple : Color.blue)
                 .frame(width: 52, height: 52)
                 .overlay {
-                    Image(systemName: conversation.type == .group ? "person.3.fill" : "person.fill")
-                        .foregroundStyle(.white)
+                    if conversation.type == .group {
+                        Image(systemName: "person.3.fill")
+                            .foregroundStyle(.white)
+                    } else if let user = otherUser {
+                        Text(user.initials)
+                            .font(.headline)
+                            .foregroundStyle(.white)
+                    } else {
+                        Image(systemName: "person.fill")
+                            .foregroundStyle(.white)
+                    }
                 }
             
             // Content
             VStack(alignment: .leading, spacing: 4) {
                 HStack {
-                    Text(conversation.type == .group ? (conversation.groupName ?? "Group") : "Contact")
+                    Text(displayName)
                         .font(.headline)
                     
                     Spacer()
@@ -187,32 +238,16 @@ struct ConversationRow: View {
         .padding(.horizontal)
         .padding(.vertical, 8)
     }
-}
-
-// Placeholder view for new chat (will implement in Step 3)
-struct NewChatPlaceholderView: View {
-    @Environment(\.dismiss) private var dismiss
     
-    var body: some View {
-        NavigationStack {
-            VStack {
-                Text("New Chat View")
-                    .font(.title2)
-                Text("(Will be implemented in Step 3)")
-                    .foregroundStyle(.secondary)
-            }
-            .navigationTitle("New Chat")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("Done") {
-                        dismiss()
-                    }
-                }
-            }
+    private var displayName: String {
+        if conversation.type == .group {
+            return conversation.groupName ?? "Group Chat"
+        } else {
+            return otherUser?.displayName ?? "Loading..."
         }
     }
 }
+
 
 #Preview {
     ChatListView()

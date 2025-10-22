@@ -49,20 +49,26 @@ class AuthService: ObservableObject {
         
         // Validate inputs
         guard !email.isEmpty, !password.isEmpty, !displayName.isEmpty else {
+            errorMessage = "Please fill in all fields"
             throw AuthError.invalidInput
         }
         
         guard isValidEmail(email) else {
+            errorMessage = "Please enter a valid email address"
             throw AuthError.invalidEmail
         }
         
         guard password.count >= 6 else {
+            errorMessage = "Password must be at least 6 characters"
             throw AuthError.weakPassword
         }
         
         do {
+            print("🔐 Starting signup for email: \(email)")
+            
             // Create Firebase Auth user
             let authResult = try await auth.createUser(withEmail: email, password: password)
+            print("✅ Firebase Auth user created: \(authResult.user.uid)")
             
             // Create user document in Firestore
             let newUser = User(
@@ -72,13 +78,19 @@ class AuthService: ObservableObject {
                 createdAt: Date()
             )
             
+            print("📝 Creating Firestore user document...")
             try await createUserDocument(user: newUser)
+            print("✅ Firestore user document created")
             
             // Update current user
             currentUser = newUser
             isAuthenticated = true
+            print("✅ Signup complete!")
             
         } catch let error as NSError {
+            print("❌ Signup error - Domain: \(error.domain), Code: \(error.code)")
+            print("❌ Error description: \(error.localizedDescription)")
+            print("❌ Full error: \(error)")
             errorMessage = handleAuthError(error)
             throw error
         }
@@ -90,14 +102,21 @@ class AuthService: ObservableObject {
         errorMessage = nil
         
         guard !email.isEmpty, !password.isEmpty else {
+            errorMessage = "Please fill in all fields"
             throw AuthError.invalidInput
         }
         
         do {
+            print("🔐 Starting login for email: \(email)")
             let authResult = try await auth.signIn(withEmail: email, password: password)
+            print("✅ Firebase Auth login successful: \(authResult.user.uid)")
+            
             await loadUserData(userId: authResult.user.uid)
+            print("✅ Login complete!")
             
         } catch let error as NSError {
+            print("❌ Login error - Domain: \(error.domain), Code: \(error.code)")
+            print("❌ Error description: \(error.localizedDescription)")
             errorMessage = handleAuthError(error)
             throw error
         }
@@ -129,7 +148,15 @@ class AuthService: ObservableObject {
             "createdAt": Timestamp(date: user.createdAt)
         ]
         
-        try await db.collection("users").document(user.id).setData(userData)
+        print("📝 Writing to Firestore: users/\(user.id)")
+        do {
+            try await db.collection("users").document(user.id).setData(userData)
+            print("✅ Firestore write successful")
+        } catch let error as NSError {
+            print("❌ Firestore write error - Domain: \(error.domain), Code: \(error.code)")
+            print("❌ Error: \(error.localizedDescription)")
+            throw error
+        }
     }
     
     private func loadUserData(userId: String) async {

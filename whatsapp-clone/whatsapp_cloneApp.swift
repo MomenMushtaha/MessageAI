@@ -6,7 +6,6 @@
 //
 
 import SwiftUI
-import SwiftData
 import FirebaseCore
 import FirebaseAuth
 import FirebaseFirestore
@@ -24,24 +23,10 @@ struct whatsapp_cloneApp: App {
         settings.cacheSettings = PersistentCacheSettings(sizeBytes: NSNumber(value: FirestoreCacheSizeUnlimited))
         Firestore.firestore().settings = settings
     }
-    
-    var sharedModelContainer: ModelContainer = {
-        let schema = Schema([
-            Message.self,
-        ])
-        let modelConfiguration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
-
-        do {
-            return try ModelContainer(for: schema, configurations: [modelConfiguration])
-        } catch {
-            fatalError("Could not create ModelContainer: \(error)")
-        }
-    }()
 
     var body: some Scene {
         WindowGroup {
             MainAppView()
         }
-        .modelContainer(sharedModelContainer)
     }
 }
