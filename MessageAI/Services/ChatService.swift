@@ -928,6 +928,96 @@ class ChatService: ObservableObject {
         return results
     }
 
+    // MARK: - Message Reactions
+
+    /// Add or toggle a reaction to a message
+    /// - Parameters:
+    ///   - emoji: The emoji reaction (e.g., "👍", "❤️")
+    ///   - messageId: The message ID
+    ///   - conversationId: The conversation ID
+    ///   - userId: The user adding the reaction
+    func addReaction(emoji: String, messageId: String, conversationId: String, userId: String) async throws {
+        let messageRef = db.collection("conversations")
+            .document(conversationId)
+            .collection("messages")
+            .document(messageId)
+
+        // Get current reactions
+        let messageDoc = try await messageRef.getDocument()
+        guard var message = try? messageDoc.data(as: Message.self) else {
+            throw NSError(domain: "ChatService", code: 404, userInfo: [NSLocalizedDescriptionKey: "Message not found"])
+        }
+
+        var reactions = message.reactions ?? [:]
+        var userIds = reactions[emoji] ?? []
+
+        // Toggle: if user already reacted with this emoji, remove it
+        if let index = userIds.firstIndex(of: userId) {
+            userIds.remove(at: index)
+            if userIds.isEmpty {
+                reactions.removeValue(forKey: emoji)
+            } else {
+                reactions[emoji] = userIds
+            }
+            print("➖ Removed reaction \(emoji) from message \(messageId)")
+        } else {
+            // Add user to this emoji's reactions
+            userIds.append(userId)
+            reactions[emoji] = userIds
+            print("➕ Added reaction \(emoji) to message \(messageId)")
+        }
+
+        // Update Firestore
+        try await messageRef.updateData([
+            "reactions": reactions.isEmpty ? FieldValue.delete() : reactions
+        ])
+
+        print("✅ Reaction updated successfully")
+    }
+
+    /// Remove a specific reaction from a message
+    /// - Parameters:
+    ///   - emoji: The emoji reaction to remove
+    ///   - messageId: The message ID
+    ///   - conversationId: The conversation ID
+    ///   - userId: The user removing the reaction
+    func removeReaction(emoji: String, messageId: String, conversationId: String, userId: String) async throws {
+        let messageRef = db.collection("conversations")
+            .document(conversationId)
+            .collection("messages")
+            .document(messageId)
+
+        // Get current reactions
+        let messageDoc = try await messageRef.getDocument()
+        guard var message = try? messageDoc.data(as: Message.self) else {
+            throw NSError(domain: "ChatService", code: 404, userInfo: [NSLocalizedDescriptionKey: "Message not found"])
+        }
+
+        var reactions = message.reactions ?? [:]
+        guard var userIds = reactions[emoji] else {
+            print("⚠️ No reaction \(emoji) to remove")
+            return
+        }
+
+        // Remove user from this emoji's reactions
+        if let index = userIds.firstIndex(of: userId) {
+            userIds.remove(at: index)
+
+            if userIds.isEmpty {
+                reactions.removeValue(forKey: emoji)
+            } else {
+                reactions[emoji] = userIds
+            }
+
+            // Update Firestore
+            try await messageRef.updateData([
+                "reactions": reactions.isEmpty ? FieldValue.delete() : reactions
+            ])
+
+            print("✅ Reaction \(emoji) removed successfully")
+        }
+    }
+
     // MARK: - Sync Pending Messages
     
     func syncPendingMessages() async {
