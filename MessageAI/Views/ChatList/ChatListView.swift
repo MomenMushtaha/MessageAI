@@ -360,21 +360,36 @@ struct ConversationRow: View, Equatable {
                 HStack {
                     Text(displayName)
                         .font(.system(size: 17, weight: .semibold))
-                    
+
                     Spacer()
-                    
+
                     if let lastMessageAt = conversation.lastMessageAt {
                         Text(lastMessageAt, style: .relative)
                             .font(.system(size: 13))
                             .foregroundStyle(.secondary)
                     }
                 }
-                
-                if let lastMessage = conversation.lastMessageText {
-                    Text(lastMessage)
-                        .font(.system(size: 15))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(2)
+
+                HStack {
+                    if let lastMessage = conversation.lastMessageText {
+                        Text(lastMessage)
+                            .font(.system(size: 15))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(2)
+                    }
+
+                    Spacer()
+
+                    // Unread badge
+                    if conversation.unreadCount(for: currentUserId) > 0 {
+                        Text("\(conversation.unreadCount(for: currentUserId))")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(Color.blue)
+                            .clipShape(Capsule())
+                    }
                 }
             }
         }

@@ -19,11 +19,14 @@ struct Conversation: Identifiable, Codable, Hashable {
     var lastMessageText: String?
     var lastMessageAt: Date?
     var createdAt: Date
-    
+
     // Group-specific properties
     var groupName: String?
     var groupAvatarURL: String?
     var adminIds: [String]? // Array of user IDs who are admins (group creator + appointed admins)
+
+    // Unread tracking - maps userId to unread count
+    var unreadCounts: [String: Int]?
 
     init(
         id: String,
@@ -51,7 +54,12 @@ struct Conversation: Identifiable, Codable, Hashable {
     func isAdmin(_ userId: String) -> Bool {
         return adminIds?.contains(userId) ?? false
     }
-    
+
+    // Helper to get unread count for a specific user
+    func unreadCount(for userId: String) -> Int {
+        return unreadCounts?[userId] ?? 0
+    }
+
     // Helper to get conversation title (for display)
     func title(currentUserId: String, users: [User]) -> String {
         if type == .group {

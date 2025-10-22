@@ -403,12 +403,71 @@ class ChatService: ObservableObject {
             if updateCount > 0 {
                 try await batch.commit()
                 print("✅ Marked \(updateCount) messages as read")
+
+                // Update badge count after marking messages as read
+                await updateBadgeCount(for: userId)
+
+                // Clear unread count for this conversation
+                await clearUnreadCount(conversationId: conversationId, userId: userId)
             }
         } catch {
             print("❌ Error marking messages as read: \(error.localizedDescription)")
         }
     }
-    
+
+    // MARK: - Badge Count Management
+
+    /// Calculate total unread message count for a user
+    func calculateTotalUnreadCount(for userId: String) async -> Int {
+        var totalUnread = 0
+
+        for conversation in conversations {
+            totalUnread += conversation.unreadCount(for: userId)
+        }
+
+        return totalUnread
+    }
+
+    /// Update app badge count
+    func updateBadgeCount(for userId: String) async {
+        let unreadCount = await calculateTotalUnreadCount(for: userId)
+        await PushNotificationService.shared.updateBadgeCount(unreadCount)
+        print("🔴 Badge count updated to: \(unreadCount)")
+    }
+
+    /// Clear unread count for a specific conversation
+    private func clearUnreadCount(conversationId: String, userId: String) async {
+        do {
+            try await db.collection("conversations")
+                .document(conversationId)
+                .updateData([
+                    "unreadCounts.\(userId)": 0
+                ])
+            print("✅ Cleared unread count for conversation \(conversationId)")
+        } catch {
+            print("❌ Error clearing unread count: \(error.localizedDescription)")
+        }
+    }
+
+    /// Increment unread count when a new message is received
+    func incrementUnreadCount(conversationId: String, recipientIds: [String]) async {
+        do {
+            var updates: [String: Any] = [:]
+
+            for recipientId in recipientIds {
+                updates["unreadCounts.\(recipientId)"] = FieldValue.increment(Int64(1))
+            }
+
+            try await db.collection("conversations")
+                .document(conversationId)
+                .updateData(updates)
+
+            print("✅ Incremented unread count for \(recipientIds.count) recipients")
+        } catch {
+            print("❌ Error incrementing unread count: \(error.localizedDescription)")
+        }
+    }
+
     // MARK: - Send Message
     
     func sendMessage(conversationId: String, senderId: String, text: String) async throws {

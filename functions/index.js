@@ -67,8 +67,17 @@ exports.sendMessageNotification = functions.firestore
 
       console.log(`📤 Sending notifications to ${recipientIds.length} recipients`);
 
-      // Collect all FCM tokens for recipients
-      const tokens = [];
+      // Increment unread count for all recipients
+      const unreadUpdates = {};
+      recipientIds.forEach(recipientId => {
+        unreadUpdates[`unreadCounts.${recipientId}`] = admin.firestore.FieldValue.increment(1);
+      });
+
+      await conversationRef.update(unreadUpdates);
+      console.log('✅ Updated unread counts for recipients');
+
+      // Collect FCM tokens and badge counts per recipient
+      const recipientNotifications = [];
 
       for (const recipientId of recipientIds) {
         // Get all FCM tokens for this user
@@ -78,18 +87,35 @@ exports.sendMessageNotification = functions.firestore
           .collection('fcmTokens')
           .get();
 
+        // Calculate badge count for this user
+        const userConversationsSnapshot = await admin.firestore()
+          .collection('conversations')
+          .where('participantIds', 'array-contains', recipientId)
+          .get();
+
+        let badgeCount = 0;
+        userConversationsSnapshot.forEach(doc => {
+          const conv = doc.data();
+          const unreadCounts = conv.unreadCounts || {};
+          badgeCount += (unreadCounts[recipientId] || 0);
+        });
+
         tokensSnapshot.forEach(doc => {
           const tokenData = doc.data();
-          tokens.push(tokenData.token);
+          recipientNotifications.push({
+            token: tokenData.token,
+            badgeCount: badgeCount,
+            recipientId: recipientId,
+          });
         });
       }
 
-      if (tokens.length === 0) {
+      if (recipientNotifications.length === 0) {
         console.log('⚠️ No FCM tokens found for recipients');
         return null;
       }
 
-      console.log(`📱 Found ${tokens.length} FCM tokens`);
+      console.log(`📱 Found ${recipientNotifications.length} FCM tokens`);
 
       // Prepare notification payload
       const notificationTitle = conversation.type === 'group'
@@ -100,41 +126,54 @@ exports.sendMessageNotification = functions.firestore
         ? '📷 Image'
         : message.text || 'New message';
 
-      const payload = {
-        notification: {
-          title: notificationTitle,
-          body: notificationBody,
-          sound: 'default',
-        },
-        data: {
-          conversationId: conversationId,
-          messageId: messageId,
-          senderId: senderId,
-          type: 'new_message',
-        },
-      };
+      // Send individual notifications with proper badge counts
+      const sendPromises = recipientNotifications.map(async (recipient) => {
+        const payload = {
+          notification: {
+            title: notificationTitle,
+            body: notificationBody,
+            sound: 'default',
+            badge: recipient.badgeCount.toString(),
+          },
+          data: {
+            conversationId: conversationId,
+            messageId: messageId,
+            senderId: senderId,
+            type: 'new_message',
+          },
+        };
 
-      // Send notification to all tokens
-      const response = await admin.messaging().sendToDevice(tokens, payload);
+        try {
+          await admin.messaging().sendToDevice(recipient.token, payload);
+          return { success: true, token: recipient.token };
+        } catch (error) {
+          console.error(`Error sending to token ${recipient.token}:`, error);
+          return { success: false, token: recipient.token, error: error };
+        }
+      });
 
-      console.log(`✅ Sent ${response.successCount} notifications`);
+      const results = await Promise.all(sendPromises);
+      const successCount = results.filter(r => r.success).length;
+      const failureCount = results.filter(r => !r.success).length;
 
-      if (response.failureCount > 0) {
-        console.warn(`⚠️ Failed to send ${response.failureCount} notifications`);
+      console.log(`✅ Sent ${successCount} notifications`);
+
+      if (failureCount > 0) {
+        console.warn(`⚠️ Failed to send ${failureCount} notifications`);
 
         // Clean up invalid tokens
         const tokensToRemove = [];
-        response.results.forEach((result, index) => {
-          const error = result.error;
-          if (error) {
-            console.error(`Error sending to token ${tokens[index]}:`, error);
+        results.forEach((result) => {
+          if (!result.success && result.error) {
+            const error = result.error;
+            console.error(`Error sending to token ${result.token}:`, error);
 
             // Remove invalid tokens
             if (
               error.code === 'messaging/invalid-registration-token' ||
               error.code === 'messaging/registration-token-not-registered'
             ) {
-              tokensToRemove.push(tokens[index]);
+              tokensToRemove.push(result.token);
             }
           }
         });
@@ -160,7 +199,7 @@ exports.sendMessageNotification = functions.firestore
         }
       }
 
-      return response;
+      return { successCount, failureCount };
     } catch (error) {
       console.error('❌ Error sending notification:', error);
       return null;
