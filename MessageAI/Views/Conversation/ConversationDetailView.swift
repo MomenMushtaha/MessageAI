@@ -60,7 +60,9 @@ struct ConversationDetailView: View {
                                         senderName: participantUsers[message.senderId]?.displayName,
                                         conversation: conversation,
                                         currentUserId: authService.currentUser?.id ?? "",
-                                        statusCache: $messageStatusCache
+                                        statusCache: $messageStatusCache,
+                                        searchQuery: isSearching ? searchText : nil,
+                                        isSearchResult: isSearching && searchResults.contains(where: { $0.id == message.id })
                                     )
                                     .id(message.id)
                                     .onAppear {
@@ -676,14 +678,18 @@ struct MessageBubbleRow: View, Equatable {
     let conversation: Conversation
     let currentUserId: String
     @Binding var statusCache: [String: String]
-    
+    let searchQuery: String?
+    let isSearchResult: Bool
+
     // Equatable conformance for performance optimization
     static func == (lhs: MessageBubbleRow, rhs: MessageBubbleRow) -> Bool {
         lhs.message.id == rhs.message.id &&
         lhs.message.status == rhs.message.status &&
         lhs.message.text == rhs.message.text &&
         lhs.senderName == rhs.senderName &&
-        lhs.statusCache[lhs.message.id] == rhs.statusCache[rhs.message.id]
+        lhs.statusCache[lhs.message.id] == rhs.statusCache[rhs.message.id] &&
+        lhs.searchQuery == rhs.searchQuery &&
+        lhs.isSearchResult == rhs.isSearchResult
     }
     
     var body: some View {
@@ -712,7 +718,7 @@ struct MessageBubbleRow: View, Equatable {
                         .background(
                             bubbleBackground
                         )
-                        .foregroundStyle(isFromCurrentUser ? .white : .primary)
+                        .foregroundStyle(isSearchResult && isFromCurrentUser ? .black : (isFromCurrentUser ? .white : .primary))
                         .clipShape(BubbleShape(isFromCurrentUser: isFromCurrentUser))
                     
                     // Timestamp and status in the corner
@@ -765,7 +771,18 @@ struct MessageBubbleRow: View, Equatable {
     
     private var bubbleBackground: some View {
         Group {
-            if isFromCurrentUser {
+            if isSearchResult {
+                // Highlight search results with yellow tint
+                if isFromCurrentUser {
+                    LinearGradient(
+                        colors: [Color.yellow.opacity(0.7), Color.orange.opacity(0.6)],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                } else {
+                    Color.yellow.opacity(0.3)
+                }
+            } else if isFromCurrentUser {
                 // Use cached status for performance
                 let displayStatus = statusCache[message.id] ?? message.displayStatus(for: conversation, currentUserId: currentUserId)
                 if displayStatus == "error" {
