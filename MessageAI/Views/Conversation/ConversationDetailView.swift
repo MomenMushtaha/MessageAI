@@ -638,6 +638,14 @@ struct MessageBubbleRow: View, Equatable {
                         VStack(alignment: .trailing, spacing: 2) {
                             Spacer()
                             HStack(spacing: 2) {
+                                if message.wasEdited {
+                                    Text("edited")
+                                        .font(.system(size: 10))
+                                        .foregroundStyle(.secondary)
+                                    Text("•")
+                                        .font(.system(size: 10))
+                                        .foregroundStyle(.secondary)
+                                }
                                 Text(message.createdAt, style: .time)
                                     .font(.system(size: 11))
                                     .foregroundStyle(.secondary)
@@ -650,10 +658,20 @@ struct MessageBubbleRow: View, Equatable {
                 
                 // Timestamp for incoming messages
                 if !isFromCurrentUser {
-                    Text(message.createdAt, style: .time)
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
-                        .padding(.leading, 12)
+                    HStack(spacing: 4) {
+                        if message.wasEdited {
+                            Text("edited")
+                                .font(.system(size: 10))
+                                .foregroundStyle(.secondary)
+                            Text("•")
+                                .font(.system(size: 10))
+                                .foregroundStyle(.secondary)
+                        }
+                        Text(message.createdAt, style: .time)
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(.leading, 12)
                 }
             }
             
