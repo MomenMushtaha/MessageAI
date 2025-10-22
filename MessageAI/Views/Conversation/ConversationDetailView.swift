@@ -436,9 +436,14 @@ struct ConversationDetailView: View {
             .background(Color(.systemGray6))
             .cornerRadius(10)
 
-            // Navigation buttons
+            // Navigation buttons and result count
             if !searchResults.isEmpty {
                 HStack(spacing: 8) {
+                    // Result count
+                    Text("\(currentSearchIndex + 1) of \(searchResults.count)")
+                        .font(.system(size: 12))
+                        .foregroundColor(.secondary)
+
                     // Previous result
                     Button(action: navigateToPreviousResult) {
                         Image(systemName: "chevron.up")
