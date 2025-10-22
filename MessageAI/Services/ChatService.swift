@@ -1018,6 +1018,43 @@ class ChatService: ObservableObject {
         }
     }
 
+    // MARK: - Message Forwarding
+
+    /// Forward a message to multiple conversations
+    /// - Parameters:
+    ///   - message: The message to forward
+    ///   - conversationIds: Array of conversation IDs to forward to
+    ///   - currentUserId: The user forwarding the message
+    func forwardMessage(message: Message, to conversationIds: [String], from currentUserId: String) async throws {
+        guard !conversationIds.isEmpty else {
+            print("⚠️ No conversations selected for forwarding")
+            return
+        }
+
+        print("📤 Forwarding message to \(conversationIds.count) conversation(s)")
+
+        for conversationId in conversationIds {
+            do {
+                // Create forwarded message text with prefix
+                let forwardedText = "Forwarded: \(message.text)"
+
+                // Send message to each conversation
+                try await sendMessage(
+                    conversationId: conversationId,
+                    senderId: currentUserId,
+                    text: forwardedText
+                )
+
+                print("✅ Message forwarded to conversation: \(conversationId)")
+            } catch {
+                print("❌ Failed to forward to \(conversationId): \(error.localizedDescription)")
+                throw error
+            }
+        }
+
+        print("✅ Message forwarded successfully to all conversations")
+    }
+
     // MARK: - Sync Pending Messages
     
     func syncPendingMessages() async {

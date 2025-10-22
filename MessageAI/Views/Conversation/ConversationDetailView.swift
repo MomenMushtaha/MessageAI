@@ -44,6 +44,8 @@ struct ConversationDetailView: View {
     @State private var showReactionPicker = false // Show reaction picker
     @State private var reactionPickerMessageId: String? // Message to react to
     @State private var reactionPickerPosition: CGPoint = .zero // Position for reaction picker
+    @State private var showForwardSheet = false // Show forward message sheet
+    @State private var messageToForward: Message? // Message to forward
     @Environment(\.dismiss) private var dismiss
     
     var body: some View {
@@ -222,6 +224,22 @@ struct ConversationDetailView: View {
                 participantUsers: participantUsers
             )
         }
+        .sheet(isPresented: $showForwardSheet) {
+            if let message = messageToForward {
+                ForwardMessageView(
+                    message: message,
+                    onForward: { conversationIds in
+                        Task {
+                            await handleForwardMessage(message: message, to: conversationIds)
+                        }
+                    },
+                    onDismiss: {
+                        showForwardSheet = false
+                        messageToForward = nil
+                    }
+                )
+            }
+        }
         .sheet(isPresented: $showMessageActions) {
             if let message = selectedMessage,
                let userId = authService.currentUser?.id {
@@ -254,8 +272,9 @@ struct ConversationDetailView: View {
                     },
                     onForward: {
                         // Show forward sheet
+                        messageToForward = message
                         showMessageActions = false
-                        // TODO: Show ForwardMessageView
+                        showForwardSheet = true
                     },
                     onDismiss: {
                         showMessageActions = false
@@ -678,6 +697,25 @@ struct ConversationDetailView: View {
                 errorMessage = "Failed to add reaction"
                 showErrorAlert = true
             }
+        }
+    }
+
+    // MARK: - Message Forwarding
+
+    private func handleForwardMessage(message: Message, to conversationIds: [String]) async {
+        guard let userId = authService.currentUser?.id else { return }
+
+        do {
+            try await chatService.forwardMessage(
+                message: message,
+                to: conversationIds,
+                from: userId
+            )
+            print("✅ Message forwarded to \(conversationIds.count) conversation(s)")
+        } catch {
+            print("❌ Error forwarding message: \(error.localizedDescription)")
+            errorMessage = "Failed to forward message"
+            showErrorAlert = true
         }
     }
 
