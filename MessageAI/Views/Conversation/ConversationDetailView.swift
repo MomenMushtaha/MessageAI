@@ -120,7 +120,12 @@ struct ConversationDetailView: View {
                     .transition(.scale.combined(with: .opacity))
                 }
             }
-            
+
+            // Edit Mode Bar (appears when editing)
+            if isEditMode {
+                editMessageBar
+            }
+
             // Message Input
             messageInputView
         }
@@ -336,7 +341,49 @@ struct ConversationDetailView: View {
                 .shadow(color: .black.opacity(0.05), radius: 5, y: -2)
         )
     }
-    
+
+    private var editMessageBar: some View {
+        VStack(spacing: 0) {
+            Divider()
+
+            HStack(spacing: 12) {
+                // Cancel button
+                Button(action: {
+                    isEditMode = false
+                    editingMessageId = nil
+                    editingText = ""
+                }) {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.title2)
+                        .foregroundColor(.gray)
+                }
+
+                // Text field
+                TextField("Edit message", text: $editingText)
+                    .textFieldStyle(RoundedBorderTextFieldStyle())
+
+                // Save button
+                Button(action: {
+                    saveEditedMessage()
+                }) {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.title2)
+                        .foregroundColor(.blue)
+                }
+                .disabled(editingText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+            .padding()
+            .background(Color(.systemBackground))
+        }
+    }
+
+    private func saveEditedMessage() {
+        // TODO: Implement in next step
+        print("⚠️ saveEditedMessage called - not yet implemented")
+        print("   editingMessageId: \(editingMessageId ?? "nil")")
+        print("   editingText: \(editingText)")
+    }
+
     private var currentMessages: [Message] {
         guard let currentUserId = authService.currentUser?.id else {
             return chatService.messages[conversation.id] ?? []
