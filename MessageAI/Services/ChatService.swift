@@ -971,3 +971,26 @@ extension Message {
     }
 }
 
+// MARK: - Message Editing Helpers
+
+extension Message {
+    /// Check if this message can be edited
+    /// Rules: Only sender, within 15 minutes, not deleted
+    func canEdit(by userId: String) -> Bool {
+        // Must be the sender
+        guard senderId == userId else { return false }
+
+        // Cannot edit deleted messages
+        guard !isDeleted(for: userId) else { return false }
+
+        // Must be within 15 minutes of creation
+        let fifteenMinutesAgo = Date().addingTimeInterval(-15 * 60)
+        return createdAt > fifteenMinutesAgo
+    }
+
+    /// Check if this message was edited
+    var wasEdited: Bool {
+        return editedAt != nil
+    }
+}
+
