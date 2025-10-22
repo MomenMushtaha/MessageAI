@@ -461,6 +461,13 @@ struct ConversationDetailView: View {
                     .disabled(currentSearchIndex >= searchResults.count - 1)
                 }
             }
+
+            // Done button to exit search
+            Button(action: clearSearch) {
+                Text("Done")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundColor(.blue)
+            }
         }
         .padding(.horizontal)
         .padding(.vertical, 8)
@@ -520,6 +527,14 @@ struct ConversationDetailView: View {
             proxy.scrollTo(targetMessage.id, anchor: .center)
         }
         print("🔍 Scrolling to message: \(targetMessage.id)")
+    }
+
+    private func clearSearch() {
+        searchText = ""
+        searchResults = []
+        currentSearchIndex = 0
+        isSearching = false
+        print("🔍 Search cleared")
     }
 
     private func saveEditedMessage() {
