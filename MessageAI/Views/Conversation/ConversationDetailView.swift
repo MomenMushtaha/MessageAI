@@ -378,10 +378,30 @@ struct ConversationDetailView: View {
     }
 
     private func saveEditedMessage() {
-        // TODO: Implement in next step
-        print("⚠️ saveEditedMessage called - not yet implemented")
-        print("   editingMessageId: \(editingMessageId ?? "nil")")
-        print("   editingText: \(editingText)")
+        guard let messageId = editingMessageId else {
+            print("❌ No message ID to edit")
+            return
+        }
+
+        Task {
+            do {
+                try await chatService.editMessage(
+                    messageId: messageId,
+                    conversationId: conversation.id,
+                    newText: editingText
+                )
+
+                // Exit edit mode
+                isEditMode = false
+                editingMessageId = nil
+                editingText = ""
+
+                print("✅ Message edited successfully")
+            } catch {
+                print("❌ Failed to edit message: \(error.localizedDescription)")
+                // TODO: Show error alert in next step
+            }
+        }
     }
 
     private var currentMessages: [Message] {
