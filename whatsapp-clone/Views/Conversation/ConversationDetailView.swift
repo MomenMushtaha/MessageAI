@@ -21,6 +21,8 @@ struct ConversationDetailView: View {
     @State private var otherUserPresence: (isOnline: Bool, lastSeen: Date?) = (false, nil)
     @State private var presenceListener: ListenerRegistration?
     @State private var showScrollToBottom = false
+    @State private var showErrorAlert = false
+    @State private var errorMessage = ""
     @Environment(\.dismiss) private var dismiss
     
     var body: some View {
@@ -146,6 +148,11 @@ struct ConversationDetailView: View {
             // Clear current conversation
             NotificationService.shared.setCurrentConversation(nil)
         }
+        .alert("Error", isPresented: $showErrorAlert) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(errorMessage)
+        }
     }
     
     private var emptyMessagesView: some View {
@@ -171,17 +178,29 @@ struct ConversationDetailView: View {
     }
     
     private var messageInputView: some View {
-        HStack(spacing: 12) {
-            // Text Field
-            HStack {
-                TextField("Message", text: $messageText, axis: .vertical)
-                    .lineLimit(1...5)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 10)
-                    .font(.body)
+        VStack(spacing: 4) {
+            // Character count warning (only show when approaching limit)
+            if messageText.count > 3500 {
+                HStack {
+                    Spacer()
+                    Text("\(messageText.count) / 4096")
+                        .font(.caption2)
+                        .foregroundStyle(messageText.count > 4096 ? .red : .secondary)
+                        .padding(.trailing, 16)
+                }
             }
-            .background(Color(.systemGray6))
-            .cornerRadius(24)
+            
+            HStack(spacing: 12) {
+                // Text Field
+                HStack {
+                    TextField("Message", text: $messageText, axis: .vertical)
+                        .lineLimit(1...5)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 10)
+                        .font(.body)
+                }
+                .background(Color(.systemGray6))
+                .cornerRadius(24)
             
             // Send Button
             Button(action: {
@@ -204,12 +223,13 @@ struct ConversationDetailView: View {
                     }
                 }
             }
-            .disabled(messageText.isEmpty || isSending)
-            .scaleEffect(messageText.isEmpty ? 0.9 : 1.0)
-            .animation(.spring(response: 0.3, dampingFraction: 0.6), value: messageText.isEmpty)
+                .disabled(messageText.isEmpty || isSending)
+                .scaleEffect(messageText.isEmpty ? 0.9 : 1.0)
+                .animation(.spring(response: 0.3, dampingFraction: 0.6), value: messageText.isEmpty)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
         .background(
             Color(.systemBackground)
                 .shadow(color: .black.opacity(0.05), radius: 5, y: -2)
@@ -332,12 +352,25 @@ struct ConversationDetailView: View {
     }
     
     private func sendMessage() async {
-        guard !messageText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-              let currentUserId = authService.currentUser?.id else {
+        guard let currentUserId = authService.currentUser?.id else {
             return
         }
         
-        let textToSend = messageText
+        let textToSend = messageText.trimmingCharacters(in: .whitespacesAndNewlines)
+        
+        // Validate before sending
+        guard !textToSend.isEmpty else {
+            errorMessage = "Please enter a message"
+            showErrorAlert = true
+            return
+        }
+        
+        guard textToSend.count <= 4096 else {
+            errorMessage = "Message is too long (max 4096 characters)"
+            showErrorAlert = true
+            return
+        }
+        
         messageText = ""
         isSending = true
         
@@ -349,6 +382,9 @@ struct ConversationDetailView: View {
             )
         } catch {
             print("❌ Error sending message: \(error.localizedDescription)")
+            // Show error to user
+            errorMessage = error.localizedDescription
+            showErrorAlert = true
             // Restore message text on error
             messageText = textToSend
         }

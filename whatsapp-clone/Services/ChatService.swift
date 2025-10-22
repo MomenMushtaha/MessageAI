@@ -122,11 +122,12 @@ class ChatService: ObservableObject {
             }
         }
         
-        // Then, observe Firestore for updates
+        // Then, observe Firestore for updates (limit to last 100 messages for performance)
         let listener = db.collection("conversations")
             .document(conversationId)
             .collection("messages")
             .order(by: "createdAt", descending: false)
+            .limit(toLast: 100)
             .addSnapshotListener { [weak self] snapshot, error in
                 guard let self = self else { return }
                 
@@ -334,8 +335,15 @@ class ChatService: ObservableObject {
     // MARK: - Send Message
     
     func sendMessage(conversationId: String, senderId: String, text: String) async throws {
-        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            return
+        let trimmedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        
+        // Validate message text
+        guard !trimmedText.isEmpty else {
+            throw ChatError.emptyMessage
+        }
+        
+        guard trimmedText.count <= 4096 else {
+            throw ChatError.messageTooLong
         }
         
         print("📤 Sending message to conversation: \(conversationId)")
@@ -348,7 +356,7 @@ class ChatService: ObservableObject {
             id: messageId,
             conversationId: conversationId,
             senderId: senderId,
-            text: text,
+            text: trimmedText,
             createdAt: Date(),
             status: "sending"
         )
@@ -368,7 +376,7 @@ class ChatService: ObservableObject {
         // Then send to Firestore
         let messageData: [String: Any] = [
             "senderId": senderId,
-            "text": text,
+            "text": trimmedText,
             "createdAt": FieldValue.serverTimestamp(),
             "status": "sent",
             "deliveredTo": [], // Will be populated as recipients receive
@@ -386,7 +394,7 @@ class ChatService: ObservableObject {
         
         // Update conversation's last message
         let conversationUpdate: [String: Any] = [
-            "lastMessageText": text,
+            "lastMessageText": trimmedText,
             "lastMessageAt": FieldValue.serverTimestamp()
         ]
         batch.updateData(conversationUpdate, forDocument: conversationRef)
@@ -411,7 +419,7 @@ class ChatService: ObservableObject {
                     id: messageId,
                     conversationId: conversationId,
                     senderId: senderId,
-                    text: text,
+                    text: trimmedText,
                     createdAt: localMessage.createdAt,
                     status: "error"
                 )
@@ -532,6 +540,28 @@ class ChatService: ObservableObject {
     deinit {
         conversationsListener?.remove()
         messageListeners.values.forEach { $0.remove() }
+    }
+}
+
+// MARK: - Chat Errors
+
+enum ChatError: LocalizedError {
+    case emptyMessage
+    case messageTooLong
+    case networkError
+    case invalidConversation
+    
+    var errorDescription: String? {
+        switch self {
+        case .emptyMessage:
+            return "Message cannot be empty"
+        case .messageTooLong:
+            return "Message is too long (max 4096 characters)"
+        case .networkError:
+            return "Network error. Please check your connection and try again."
+        case .invalidConversation:
+            return "Invalid conversation"
+        }
     }
 }
 
