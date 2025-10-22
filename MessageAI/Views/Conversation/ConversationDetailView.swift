@@ -29,6 +29,9 @@ struct ConversationDetailView: View {
     @State private var messageStatusCache: [String: String] = [:] // messageId -> status for performance
     @State private var selectedMessage: Message? // For message actions
     @State private var showMessageActions = false // Show action sheet
+    @State private var isEditMode = false // Edit mode active
+    @State private var editingMessageId: String? // ID of message being edited
+    @State private var editingText = "" // Text being edited
     @Environment(\.dismiss) private var dismiss
     
     var body: some View {
@@ -180,6 +183,13 @@ struct ConversationDetailView: View {
                 MessageActionsSheet(
                     message: message,
                     currentUserId: userId,
+                    onEdit: {
+                        // Enter edit mode
+                        editingMessageId = message.id
+                        editingText = message.text
+                        isEditMode = true
+                        showMessageActions = false
+                    },
                     onDelete: { deleteForEveryone in
                         Task {
                             do {
