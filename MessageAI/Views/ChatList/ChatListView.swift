@@ -191,6 +191,13 @@ struct ChatListView: View {
             .onDisappear {
                 chatService.stopObservingConversations()
             }
+            .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("OpenConversation"))) { notification in
+                // Handle notification tap to open specific conversation
+                if let conversationId = notification.userInfo?["conversationId"] as? String {
+                    print("📱 Opening conversation from notification: \(conversationId)")
+                    selectedConversationId = conversationId
+                }
+            }
         }
     }
     
