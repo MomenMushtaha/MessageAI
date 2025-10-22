@@ -831,11 +831,46 @@ class ChatService: ObservableObject {
     ///   - conversationId: The conversation containing the message
     ///   - newText: The new text content for the message
     func editMessage(messageId: String, conversationId: String, newText: String) async throws {
-        // TODO: Implement in next step
-        print("⚠️ editMessage called - not yet implemented")
-        print("   messageId: \(messageId)")
-        print("   conversationId: \(conversationId)")
-        print("   newText: \(newText)")
+        guard let currentUserId = AuthService.shared.currentUser?.id else {
+            throw NSError(domain: "ChatService", code: 401, userInfo: [NSLocalizedDescriptionKey: "User not authenticated"])
+        }
+
+        // Validate new text is not empty
+        let trimmedText = newText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedText.isEmpty else {
+            throw NSError(domain: "ChatService", code: 400, userInfo: [NSLocalizedDescriptionKey: "Message cannot be empty"])
+        }
+
+        let messageRef = db.collection("conversations")
+            .document(conversationId)
+            .collection("messages")
+            .document(messageId)
+
+        // Fetch the message to verify permissions and get original text
+        let messageDoc = try await messageRef.getDocument()
+        guard let message = try? messageDoc.data(as: Message.self) else {
+            throw NSError(domain: "ChatService", code: 404, userInfo: [NSLocalizedDescriptionKey: "Message not found"])
+        }
+
+        // Verify user can edit this message
+        guard message.canEdit(by: currentUserId) else {
+            throw NSError(domain: "ChatService", code: 403, userInfo: [NSLocalizedDescriptionKey: "You can only edit your own messages within 15 minutes"])
+        }
+
+        print("✏️ Editing message \(messageId)")
+
+        // Prepare edit history
+        var editHistory = message.editHistory ?? []
+        editHistory.append(message.text) // Save original/previous text
+
+        // Update Firestore
+        try await messageRef.updateData([
+            "text": trimmedText,
+            "editedAt": FieldValue.serverTimestamp(),
+            "editHistory": editHistory
+        ])
+
+        print("✅ Message edited successfully")
     }
 
     // MARK: - Sync Pending Messages
