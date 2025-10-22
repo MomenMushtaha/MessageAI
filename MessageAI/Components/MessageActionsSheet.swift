@@ -12,6 +12,7 @@ struct MessageActionsSheet: View {
     let currentUserId: String
     let onEdit: () -> Void // Callback when edit is tapped
     let onDelete: (Bool) -> Void // Parameter: deleteForEveryone
+    let onForward: () -> Void // Callback when forward is tapped
     let onDismiss: () -> Void
 
     var body: some View {
@@ -67,6 +68,27 @@ struct MessageActionsSheet: View {
 
                 Divider()
             }
+
+            // Forward
+            Button(action: {
+                onForward()
+            }) {
+                HStack(spacing: 12) {
+                    Image(systemName: "arrowshape.turn.up.right")
+                        .font(.body)
+                        .foregroundColor(.blue)
+                        .frame(width: 24)
+
+                    Text("Forward")
+                        .foregroundColor(.primary)
+
+                    Spacer()
+                }
+                .padding()
+                .background(Color(.systemBackground))
+            }
+
+            Divider()
 
             // Delete for me
             Button(action: {
@@ -131,7 +153,7 @@ struct MessageActionsSheet: View {
         .cornerRadius(16)
         .shadow(radius: 20)
         .padding()
-        .presentationDetents([.height(message.senderId == currentUserId ? 320 : 240)])
+        .presentationDetents([.height(message.senderId == currentUserId ? 380 : 300)])
         .presentationDragIndicator(.visible)
     }
 }
@@ -156,6 +178,9 @@ struct MessageActionsSheet: View {
             },
             onDelete: { deleteForEveryone in
                 print("Delete tapped: deleteForEveryone=\(deleteForEveryone)")
+            },
+            onForward: {
+                print("Forward tapped")
             },
             onDismiss: {
                 print("Dismiss tapped")

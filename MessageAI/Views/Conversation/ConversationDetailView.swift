@@ -252,6 +252,11 @@ struct ConversationDetailView: View {
                         }
                         showMessageActions = false
                     },
+                    onForward: {
+                        // Show forward sheet
+                        showMessageActions = false
+                        // TODO: Show ForwardMessageView
+                    },
                     onDismiss: {
                         showMessageActions = false
                     }
