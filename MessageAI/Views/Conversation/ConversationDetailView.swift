@@ -41,6 +41,9 @@ struct ConversationDetailView: View {
     @State private var typingListener: ListenerRegistration? // Typing status listener
     @State private var typingTimer: Timer? // Auto-stop typing timer
     @State private var isCurrentUserTyping = false // Track if current user is typing
+    @State private var showReactionPicker = false // Show reaction picker
+    @State private var reactionPickerMessageId: String? // Message to react to
+    @State private var reactionPickerPosition: CGPoint = .zero // Position for reaction picker
     @Environment(\.dismiss) private var dismiss
     
     var body: some View {
@@ -67,7 +70,11 @@ struct ConversationDetailView: View {
                                         currentUserId: authService.currentUser?.id ?? "",
                                         statusCache: $messageStatusCache,
                                         searchQuery: isSearching ? searchText : nil,
-                                        isSearchResult: isSearching && searchResults.contains(where: { $0.id == message.id })
+                                        isSearchResult: isSearching && searchResults.contains(where: { $0.id == message.id }),
+                                        onReactionTap: {
+                                            reactionPickerMessageId = message.id
+                                            showReactionPicker = true
+                                        }
                                     )
                                     .id(message.id)
                                     .onAppear {
@@ -287,8 +294,34 @@ struct ConversationDetailView: View {
         } message: {
             Text("This will delete all messages from this chat on your device only. Other participants will still see the messages.")
         }
+        .overlay(reactionPickerOverlay)
     }
     
+    @ViewBuilder
+    private var reactionPickerOverlay: some View {
+        if showReactionPicker {
+            Color.black.opacity(0.001)
+                .ignoresSafeArea()
+                .onTapGesture {
+                    showReactionPicker = false
+                }
+
+            VStack {
+                Spacer()
+                ReactionPickerView(
+                    onReactionSelected: { emoji in
+                        handleReactionSelected(emoji)
+                    },
+                    onDismiss: {
+                        showReactionPicker = false
+                    }
+                )
+                .padding(.bottom, 100)
+            }
+            .transition(.scale.combined(with: .opacity))
+        }
+    }
+
     private var emptyMessagesView: some View {
         VStack(spacing: 16) {
             Spacer()
@@ -615,6 +648,34 @@ struct ConversationDetailView: View {
         }
     }
 
+    // MARK: - Reactions
+
+    private func handleReactionSelected(_ emoji: String) {
+        guard let messageId = reactionPickerMessageId,
+              let userId = authService.currentUser?.id else {
+            return
+        }
+
+        showReactionPicker = false
+        reactionPickerMessageId = nil
+
+        Task {
+            do {
+                try await chatService.addReaction(
+                    emoji: emoji,
+                    messageId: messageId,
+                    conversationId: conversation.id,
+                    userId: userId
+                )
+                print("✅ Reaction \(emoji) added to message")
+            } catch {
+                print("❌ Error adding reaction: \(error.localizedDescription)")
+                errorMessage = "Failed to add reaction"
+                showErrorAlert = true
+            }
+        }
+    }
+
     private func saveEditedMessage() {
         guard let messageId = editingMessageId else {
             print("❌ No message ID to edit")
@@ -865,6 +926,7 @@ struct MessageBubbleRow: View, Equatable {
     @Binding var statusCache: [String: String]
     let searchQuery: String?
     let isSearchResult: Bool
+    let onReactionTap: () -> Void
 
     // Equatable conformance for performance optimization
     static func == (lhs: MessageBubbleRow, rhs: MessageBubbleRow) -> Bool {
@@ -905,6 +967,9 @@ struct MessageBubbleRow: View, Equatable {
                         )
                         .foregroundStyle(isSearchResult && isFromCurrentUser ? .black : (isFromCurrentUser ? .white : .primary))
                         .clipShape(BubbleShape(isFromCurrentUser: isFromCurrentUser))
+                        .onTapGesture(count: 2) {
+                            onReactionTap()
+                        }
                     
                     // Timestamp and status in the corner
                     if isFromCurrentUser {
