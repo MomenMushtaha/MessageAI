@@ -254,19 +254,21 @@ struct ConversationDetailView: View {
         .onAppear {
             // Load participant users first (especially important for new groups)
             loadParticipantUsers()
-            
+
             // Then start observing messages
             chatService.observeMessages(conversationId: conversation.id)
             markMessagesAsDeliveredAndRead()
             startObservingPresence()
-            
+            startObservingTyping()
+
             // Track current conversation for notifications
             NotificationService.shared.setCurrentConversation(conversation.id)
         }
         .onDisappear {
             chatService.stopObservingMessages(conversationId: conversation.id)
             stopObservingPresence()
-            
+            stopObservingTyping()
+
             // Clear current conversation
             NotificationService.shared.setCurrentConversation(nil)
         }
@@ -741,7 +743,32 @@ struct ConversationDetailView: View {
         presenceListener?.remove()
         presenceListener = nil
     }
-    
+
+    private func startObservingTyping() {
+        guard let currentUserId = authService.currentUser?.id else { return }
+
+        typingListener = PresenceService.shared.observeTypingStatus(
+            conversationId: conversation.id,
+            currentUserId: currentUserId
+        ) { statuses in
+            Task { @MainActor in
+                self.typingUsers = statuses
+            }
+        }
+        print("⌨️ Started observing typing for conversation: \(conversation.id)")
+    }
+
+    private func stopObservingTyping() {
+        typingListener?.remove()
+        typingListener = nil
+
+        // Also stop our own typing indicator if active
+        if isCurrentUserTyping, let userId = authService.currentUser?.id {
+            stopTypingIndicator(userId: userId)
+        }
+        print("⌨️ Stopped observing typing")
+    }
+
     private func sendMessage() async {
         guard let currentUserId = authService.currentUser?.id else {
             return
