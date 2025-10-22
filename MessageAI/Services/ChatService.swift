@@ -614,6 +614,22 @@ class ChatService: ObservableObject {
         }
     }
     
+    // MARK: - Clear Chat History
+    
+    /// Clears chat history locally for the current user only
+    /// Messages remain in Firestore and visible to other participants
+    func clearChatHistory(conversationId: String) async throws {
+        print("🗑️ Clearing chat history for conversation: \(conversationId)")
+        
+        // Delete local messages only
+        try LocalStorageService.shared.deleteMessages(for: conversationId)
+        
+        // Clear from memory
+        messages[conversationId] = []
+        
+        print("✅ Chat history cleared locally for conversation: \(conversationId)")
+    }
+    
     // MARK: - Get User
     
     func getUser(userId: String) async throws -> User? {

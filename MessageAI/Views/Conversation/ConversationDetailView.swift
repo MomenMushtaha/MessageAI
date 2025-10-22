@@ -23,6 +23,7 @@ struct ConversationDetailView: View {
     @State private var showScrollToBottom = false
     @State private var showErrorAlert = false
     @State private var errorMessage = ""
+    @State private var showClearHistoryAlert = false
     @Environment(\.dismiss) private var dismiss
     
     var body: some View {
@@ -123,6 +124,19 @@ struct ConversationDetailView: View {
                 }
                 .buttonStyle(.plain)
             }
+            
+            ToolbarItem(placement: .navigationBarTrailing) {
+                Menu {
+                    Button(role: .destructive, action: {
+                        showClearHistoryAlert = true
+                    }) {
+                        Label("Clear Chat History", systemImage: "trash")
+                    }
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                        .foregroundStyle(.blue)
+                }
+            }
         }
         .sheet(isPresented: $showParticipantList) {
             ParticipantListView(
@@ -153,6 +167,16 @@ struct ConversationDetailView: View {
             Button("OK", role: .cancel) {}
         } message: {
             Text(errorMessage)
+        }
+        .alert("Clear Chat History?", isPresented: $showClearHistoryAlert) {
+            Button("Cancel", role: .cancel) {}
+            Button("Clear", role: .destructive) {
+                Task {
+                    await clearChatHistory()
+                }
+            }
+        } message: {
+            Text("This will delete all messages from this chat on your device only. Other participants will still see the messages.")
         }
     }
     
@@ -380,6 +404,17 @@ struct ConversationDetailView: View {
         }
         
         isSending = false
+    }
+    
+    private func clearChatHistory() async {
+        do {
+            try await chatService.clearChatHistory(conversationId: conversation.id)
+            print("✅ Chat history cleared successfully")
+        } catch {
+            print("❌ Error clearing chat history: \(error.localizedDescription)")
+            errorMessage = "Failed to clear chat history: \(error.localizedDescription)"
+            showErrorAlert = true
+        }
     }
 }
 

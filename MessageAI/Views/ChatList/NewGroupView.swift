@@ -107,7 +107,7 @@ struct NewGroupView: View {
     }
     
     private var selectedUsersSummary: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 12) {
             Text("Selected: \(selectedUsers.count)")
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -116,27 +116,28 @@ struct NewGroupView: View {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 12) {
                     ForEach(selectedUsersList) { user in
-                        VStack(spacing: 4) {
+                        VStack(spacing: 6) {
                             ZStack(alignment: .topTrailing) {
                                 Circle()
                                     .fill(Color.blue)
-                                    .frame(width: 52, height: 52)
+                                    .frame(width: 56, height: 56)
                                     .overlay {
                                         Text(user.initials)
-                                            .font(.caption)
+                                            .font(.title3)
                                             .foregroundStyle(.white)
                                     }
                                 
                                 Circle()
                                     .fill(Color.red)
-                                    .frame(width: 20, height: 20)
+                                    .frame(width: 22, height: 22)
                                     .overlay {
                                         Image(systemName: "xmark")
-                                            .font(.system(size: 10))
+                                            .font(.system(size: 11, weight: .semibold))
                                             .foregroundStyle(.white)
                                     }
-                                    .offset(x: 5, y: -5)
+                                    .offset(x: 6, y: -6)
                             }
+                            .frame(height: 62)
                             .onTapGesture {
                                 selectedUsers.remove(user.id)
                             }
@@ -144,14 +145,16 @@ struct NewGroupView: View {
                             Text(user.displayName.components(separatedBy: " ").first ?? user.displayName)
                                 .font(.caption2)
                                 .lineLimit(1)
-                                .frame(width: 60)
+                                .frame(width: 64)
                         }
                     }
                 }
                 .padding(.horizontal)
+                .padding(.vertical, 4)
             }
+            .frame(height: 100)
         }
-        .padding(.vertical, 8)
+        .padding(.vertical, 12)
         .background(Color(.systemGray6).opacity(0.5))
     }
     
