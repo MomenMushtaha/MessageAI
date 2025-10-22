@@ -36,6 +36,7 @@ struct ConversationDetailView: View {
     @State private var searchText = "" // Search query
     @State private var searchResults: [Message] = [] // Filtered search results
     @State private var currentSearchIndex = 0 // Current result index for navigation
+    @State private var searchDebounceTask: Task<Void, Never>? // Debounce task for search
     @Environment(\.dismiss) private var dismiss
     
     var body: some View {
@@ -417,7 +418,7 @@ struct ConversationDetailView: View {
                     .textFieldStyle(PlainTextFieldStyle())
                     .autocorrectionDisabled()
                     .onChange(of: searchText) { oldValue, newValue in
-                        performSearch()
+                        performSearchDebounced()
                     }
 
                 if !searchText.isEmpty {
@@ -472,6 +473,25 @@ struct ConversationDetailView: View {
         .padding(.horizontal)
         .padding(.vertical, 8)
         .background(Color(.systemBackground))
+    }
+
+    private func performSearchDebounced() {
+        // Cancel any existing search task
+        searchDebounceTask?.cancel()
+
+        // Create new debounced search task
+        searchDebounceTask = Task {
+            // Wait for 300ms debounce
+            try? await Task.sleep(nanoseconds: 300_000_000)
+
+            // Check if task was cancelled
+            guard !Task.isCancelled else { return }
+
+            // Perform the actual search
+            await MainActor.run {
+                performSearch()
+            }
+        }
     }
 
     private func performSearch() {
@@ -530,6 +550,7 @@ struct ConversationDetailView: View {
     }
 
     private func clearSearch() {
+        searchDebounceTask?.cancel()
         searchText = ""
         searchResults = []
         currentSearchIndex = 0
