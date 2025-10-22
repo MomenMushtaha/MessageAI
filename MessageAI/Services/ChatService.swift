@@ -88,7 +88,7 @@ class ChatService: ObservableObject {
                     
                     let conversations = documents.compactMap { doc -> Conversation? in
                         let data = doc.data()
-                        
+
                         return Conversation(
                             id: doc.documentID,
                             type: ConversationType(rawValue: data["type"] as? String ?? "direct") ?? .direct,
@@ -100,10 +100,16 @@ class ChatService: ObservableObject {
                             createdAt: (data["createdAt"] as? Timestamp)?.dateValue() ?? Date()
                         )
                     }
-                    
-                    // Only update if changed to prevent unnecessary re-renders
-                    if conversations.count != self.conversations.count ||
-                       conversations.first?.lastMessageAt != self.conversations.first?.lastMessageAt {
+
+                    // Check if conversations have actually changed
+                    let conversationIds = Set(conversations.map { $0.id })
+                    let existingIds = Set(self.conversations.map { $0.id })
+                    let hasNewConversations = conversationIds != existingIds
+                    let countChanged = conversations.count != self.conversations.count
+                    let timestampChanged = conversations.first?.lastMessageAt != self.conversations.first?.lastMessageAt
+
+                    // Update if there are new conversations, count changed, or timestamp changed
+                    if hasNewConversations || countChanged || timestampChanged {
                         self.conversations = conversations
                         print("✅ Loaded \(conversations.count) conversations")
                     }
@@ -466,12 +472,33 @@ class ChatService: ObservableObject {
             let sortedIds = participantIds.sorted()
             let conversationId = sortedIds.joined(separator: "_")
             
-            // Check if conversation already exists
+            // Check if conversation already exists locally
+            if conversations.contains(where: { $0.id == conversationId }) {
+                print("✅ Conversation already exists locally: \(conversationId)")
+                return conversationId
+            }
+            
+            // Check if conversation already exists in Firestore
             let conversationRef = db.collection("conversations").document(conversationId)
             let doc = try await conversationRef.getDocument()
             
             if doc.exists {
-                print("✅ Conversation already exists: \(conversationId)")
+                print("✅ Conversation already exists in Firestore: \(conversationId)")
+                // Add to local array optimistically if not there yet
+                if !conversations.contains(where: { $0.id == conversationId }) {
+                    let conversation = Conversation(
+                        id: conversationId,
+                        type: .direct,
+                        participantIds: participantIds,
+                        lastMessageText: nil,
+                        lastMessageAt: Date(),
+                        groupName: nil,
+                        groupAvatarURL: nil,
+                        createdAt: Date()
+                    )
+                    conversations.insert(conversation, at: 0)
+                    print("✅ Added existing conversation to local array")
+                }
                 return conversationId
             }
             
@@ -484,13 +511,32 @@ class ChatService: ObservableObject {
                 "lastMessageAt": FieldValue.serverTimestamp()
             ]
             
+            // Optimistically add to local array immediately
+            let optimisticConversation = Conversation(
+                id: conversationId,
+                type: .direct,
+                participantIds: participantIds,
+                lastMessageText: nil,
+                lastMessageAt: Date(),
+                groupName: nil,
+                groupAvatarURL: nil,
+                createdAt: Date()
+            )
+            conversations.insert(optimisticConversation, at: 0)
+            print("✅ Optimistically added conversation to local array")
+            
+            // Write to Firestore (will be confirmed by listener)
             try await conversationRef.setData(conversationData)
-            print("✅ Conversation created")
+            print("✅ Conversation created in Firestore")
+            
             return conversationId
         }
         
         // For group chats, generate random ID
         let conversationRef = db.collection("conversations").document()
+        let conversationId = conversationRef.documentID
+        
+        print("📝 Creating new group conversation: \(conversationId)")
         let conversationData: [String: Any] = [
             "type": type.rawValue,
             "participantIds": participantIds,
@@ -499,9 +545,25 @@ class ChatService: ObservableObject {
             "lastMessageAt": FieldValue.serverTimestamp()
         ]
         
+        // Optimistically add to local array immediately
+        let optimisticConversation = Conversation(
+            id: conversationId,
+            type: .group,
+            participantIds: participantIds,
+            lastMessageText: nil,
+            lastMessageAt: Date(),
+            groupName: groupName,
+            groupAvatarURL: nil,
+            createdAt: Date()
+        )
+        conversations.insert(optimisticConversation, at: 0)
+        print("✅ Optimistically added group to local array")
+        
+        // Write to Firestore (will be confirmed by listener)
         try await conversationRef.setData(conversationData)
-        print("✅ Group conversation created: \(conversationRef.documentID)")
-        return conversationRef.documentID
+        print("✅ Group conversation created in Firestore")
+        
+        return conversationId
     }
     
     // MARK: - Get User

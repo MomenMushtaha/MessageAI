@@ -11,10 +11,10 @@ struct NewChatView: View {
     @EnvironmentObject var authService: AuthService
     @EnvironmentObject var chatService: ChatService
     @Environment(\.dismiss) private var dismiss
-    
+
     @State private var searchText = ""
     @State private var isLoading = false
-    
+
     var onConversationCreated: (String) -> Void
     
     var body: some View {
@@ -121,22 +121,22 @@ struct NewChatView: View {
     
     private func createConversation(with user: User) async {
         guard let currentUserId = authService.currentUser?.id else { return }
-        
+
         isLoading = true
-        
+
         do {
             let conversationId = try await chatService.createOrGetConversation(
                 participantIds: [currentUserId, user.id],
                 type: .direct
             )
-            
+
             dismiss()
             onConversationCreated(conversationId)
-            
+
         } catch {
             print("❌ Error creating conversation: \(error.localizedDescription)")
         }
-        
+
         isLoading = false
     }
 }

@@ -11,13 +11,13 @@ struct NewGroupView: View {
     @EnvironmentObject var authService: AuthService
     @EnvironmentObject var chatService: ChatService
     @Environment(\.dismiss) private var dismiss
-    
+
     @State private var groupName = ""
     @State private var searchText = ""
     @State private var selectedUsers: Set<String> = []
     @State private var isLoading = false
     @State private var showingGroupDetails = false
-    
+
     var onConversationCreated: (String) -> Void
     
     var body: some View {
@@ -264,14 +264,14 @@ struct SelectableUserRow: View {
 struct GroupDetailsView: View {
     let selectedUsers: [String]
     let allUsers: [User]
-    
+
     @EnvironmentObject var authService: AuthService
     @EnvironmentObject var chatService: ChatService
     @Environment(\.dismiss) private var dismiss
-    
+
     @State private var groupName = ""
     @State private var isCreating = false
-    
+
     var onGroupCreated: (String) -> Void
     
     var body: some View {
@@ -373,31 +373,30 @@ struct GroupDetailsView: View {
               !groupName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             return
         }
-        
+
         isCreating = true
-        
+
         do {
             var participantIds = selectedUsers
             participantIds.append(currentUserId)
-            
+
             let conversationId = try await chatService.createOrGetConversation(
                 participantIds: participantIds,
                 type: .group,
                 groupName: groupName.trimmingCharacters(in: .whitespacesAndNewlines)
             )
-            
+
             print("✅ Group created: \(conversationId)")
-            
-            // Wait a bit for Firestore listener to update conversations
-            try? await Task.sleep(nanoseconds: 500_000_000) // 0.5 seconds
-            
+
+            // Conversation is already in local array (optimistic update)
+            // No need to wait - navigate immediately
             dismiss()
             onGroupCreated(conversationId)
-            
+
         } catch {
             print("❌ Error creating group: \(error.localizedDescription)")
         }
-        
+
         isCreating = false
     }
 }

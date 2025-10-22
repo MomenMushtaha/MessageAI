@@ -254,7 +254,7 @@ struct ConversationRow: View, Equatable {
     let conversation: Conversation
     let currentUserId: String
     let otherUser: User?
-    
+
     // Equatable conformance for performance optimization
     static func == (lhs: ConversationRow, rhs: ConversationRow) -> Bool {
         lhs.conversation.id == rhs.conversation.id &&

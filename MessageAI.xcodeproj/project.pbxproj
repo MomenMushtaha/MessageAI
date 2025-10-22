@@ -13,6 +13,7 @@
 		A52EBF622EA85C3D008D65D8 /* FirebaseAnalytics in Frameworks */ = {isa = PBXBuildFile; productRef = A5FB00052EA8300000000005 /* FirebaseAnalytics */; };
 		A5B11FA02EA82D640048396F /* README.md in Resources */ = {isa = PBXBuildFile; fileRef = A5B11F9F2EA82D640048396F /* README.md */; };
 		A5B11FA22EA82D6B0048396F /* .gitignore in Resources */ = {isa = PBXBuildFile; fileRef = A5B11FA12EA82D6B0048396F /* .gitignore */; };
+		A5CC52EE2EA8A03B00F477BD /* HapticService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A5CC52ED2EA8A03B00F477BD /* HapticService.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -38,6 +39,7 @@
 		A5B11F802EA829040048396F /* MessageAIUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = MessageAIUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		A5B11F9F2EA82D640048396F /* README.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = README.md; sourceTree = "<group>"; };
 		A5B11FA12EA82D6B0048396F /* .gitignore */ = {isa = PBXFileReference; lastKnownFileType = text; path = .gitignore; sourceTree = "<group>"; };
+		A5CC52ED2EA8A03B00F477BD /* HapticService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HapticService.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -96,6 +98,7 @@
 				A5B11F682EA829030048396F /* Products */,
 				A5B11F9F2EA82D640048396F /* README.md */,
 				A5B11FA12EA82D6B0048396F /* .gitignore */,
+				A5CC52ED2EA8A03B00F477BD /* HapticService.swift */,
 			);
 			sourceTree = "<group>";
 		};
@@ -262,6 +265,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				A5CC52EE2EA8A03B00F477BD /* HapticService.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
