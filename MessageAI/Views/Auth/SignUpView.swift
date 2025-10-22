@@ -8,7 +8,7 @@
 import SwiftUI
 
 struct SignUpView: View {
-    @ObservedObject var authService = AuthService.shared
+    @EnvironmentObject var authService: AuthService
     @State private var displayName = ""
     @State private var email = ""
     @State private var password = ""
@@ -148,5 +148,6 @@ struct SignUpView: View {
 
 #Preview {
     SignUpView(onShowLogin: {})
+        .environmentObject(AuthService.shared)
 }
 

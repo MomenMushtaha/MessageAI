@@ -8,7 +8,7 @@
 import SwiftUI
 
 struct LoginView: View {
-    @ObservedObject var authService = AuthService.shared
+    @EnvironmentObject var authService: AuthService
     @State private var email = ""
     @State private var password = ""
     @State private var isLoading = false
@@ -119,5 +119,6 @@ struct LoginView: View {
 
 #Preview {
     LoginView(onShowSignUp: {})
+        .environmentObject(AuthService.shared)
 }
 

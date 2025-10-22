@@ -36,6 +36,7 @@ struct MainAppView: View {
                                 }
                             }
                         )
+                        .environmentObject(authService)
                         .transition(.opacity)
                     } else {
                         LoginView(
@@ -45,6 +46,7 @@ struct MainAppView: View {
                                 }
                             }
                         )
+                        .environmentObject(authService)
                         .transition(.opacity)
                     }
                 }

@@ -15,6 +15,9 @@ import FirebaseMessaging
 @main
 struct MessageAIApp: App {
     
+    // Connect AppDelegate to satisfy Firebase requirements
+    @UIApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
+    
     let modelContainer: ModelContainer
     
     init() {
