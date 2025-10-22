@@ -212,18 +212,53 @@ struct MessageBubbleRow: View {
                 Text(message.text)
                     .padding(.horizontal, 12)
                     .padding(.vertical, 8)
-                    .background(isFromCurrentUser ? Color.blue : Color(.systemGray5))
+                    .background(isFromCurrentUser ? (message.status == "error" ? Color.red.opacity(0.7) : Color.blue) : Color(.systemGray5))
                     .foregroundStyle(isFromCurrentUser ? .white : .primary)
                     .cornerRadius(16)
                 
-                Text(message.createdAt, style: .time)
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
+                HStack(spacing: 4) {
+                    Text(message.createdAt, style: .time)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                    
+                    // Status indicator for sent messages
+                    if isFromCurrentUser {
+                        statusIcon
+                    }
+                }
             }
             
             if !isFromCurrentUser {
                 Spacer(minLength: 50)
             }
+        }
+    }
+    
+    @ViewBuilder
+    private var statusIcon: some View {
+        switch message.status {
+        case "sending":
+            ProgressView()
+                .scaleEffect(0.7)
+                .frame(width: 12, height: 12)
+        case "sent":
+            Image(systemName: "checkmark")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        case "delivered":
+            Image(systemName: "checkmark.checkmark")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        case "read":
+            Image(systemName: "checkmark.checkmark")
+                .font(.caption2)
+                .foregroundStyle(.blue)
+        case "error":
+            Image(systemName: "exclamationmark.circle")
+                .font(.caption2)
+                .foregroundStyle(.red)
+        default:
+            EmptyView()
         }
     }
 }

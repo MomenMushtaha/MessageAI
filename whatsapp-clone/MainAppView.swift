@@ -10,38 +10,65 @@ import SwiftData
 
 struct MainAppView: View {
     @StateObject private var authService = AuthService.shared
+    @StateObject private var networkMonitor = NetworkMonitor.shared
+    @StateObject private var chatService = ChatService.shared
     @State private var showSignUp = false
+    @State private var hasShownInitialSync = false
     
     var body: some View {
-        Group {
-            if authService.isAuthenticated {
-                // Show Chat List when authenticated
-                ChatListView()
-            } else {
-                // Show Login/SignUp flow
-                if showSignUp {
-                    SignUpView(
-                        onShowLogin: {
-                            withAnimation {
-                                showSignUp = false
-                            }
-                        }
-                    )
-                    .transition(.move(edge: .trailing))
+        ZStack(alignment: .top) {
+            Group {
+                if authService.isAuthenticated {
+                    // Show Chat List when authenticated
+                    ChatListView()
                 } else {
-                    LoginView(
-                        onShowSignUp: {
-                            withAnimation {
-                                showSignUp = true
+                    // Show Login/SignUp flow
+                    if showSignUp {
+                        SignUpView(
+                            onShowLogin: {
+                                withAnimation {
+                                    showSignUp = false
+                                }
                             }
-                        }
-                    )
-                    .transition(.move(edge: .leading))
+                        )
+                        .transition(.move(edge: .trailing))
+                    } else {
+                        LoginView(
+                            onShowSignUp: {
+                                withAnimation {
+                                    showSignUp = true
+                                }
+                            }
+                        )
+                        .transition(.move(edge: .leading))
+                    }
+                }
+            }
+            .animation(.easeInOut, value: authService.isAuthenticated)
+            .animation(.easeInOut, value: showSignUp)
+            
+            // Offline Banner
+            OfflineBanner(isConnected: networkMonitor.isConnected)
+                .animation(.easeInOut, value: networkMonitor.isConnected)
+        }
+        .onChange(of: networkMonitor.isConnected) { oldValue, newValue in
+            if !oldValue && newValue && authService.isAuthenticated {
+                // Just came back online and user is authenticated
+                print("🌐 Back online! Syncing pending messages...")
+                Task {
+                    await chatService.syncPendingMessages()
                 }
             }
         }
-        .animation(.easeInOut, value: authService.isAuthenticated)
-        .animation(.easeInOut, value: showSignUp)
+        .onAppear {
+            if authService.isAuthenticated && networkMonitor.isConnected && !hasShownInitialSync {
+                // Sync pending messages on app launch
+                hasShownInitialSync = true
+                Task {
+                    await chatService.syncPendingMessages()
+                }
+            }
+        }
     }
 }
 

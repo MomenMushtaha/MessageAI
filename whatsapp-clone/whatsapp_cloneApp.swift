@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import SwiftData
 import FirebaseCore
 import FirebaseAuth
 import FirebaseFirestore
@@ -13,6 +14,8 @@ import FirebaseMessaging
 
 @main
 struct whatsapp_cloneApp: App {
+    
+    let modelContainer: ModelContainer
     
     init() {
         // Configure Firebase
@@ -22,11 +25,19 @@ struct whatsapp_cloneApp: App {
         let settings = FirestoreSettings()
         settings.cacheSettings = PersistentCacheSettings(sizeBytes: NSNumber(value: FirestoreCacheSizeUnlimited))
         Firestore.firestore().settings = settings
+        
+        // Configure SwiftData
+        do {
+            modelContainer = try ModelContainer(for: LocalMessage.self, LocalConversation.self)
+        } catch {
+            fatalError("Could not initialize ModelContainer: \(error)")
+        }
     }
 
     var body: some Scene {
         WindowGroup {
             MainAppView()
         }
+        .modelContainer(modelContainer)
     }
 }

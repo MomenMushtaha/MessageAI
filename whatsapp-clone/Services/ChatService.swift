@@ -107,6 +107,20 @@ class ChatService: ObservableObject {
         
         print("👂 Starting to observe messages for conversation: \(conversationId)")
         
+        // First, load from local storage (instant)
+        Task { @MainActor in
+            do {
+                let localMessages = try LocalStorageService.shared.getMessages(for: conversationId)
+                if !localMessages.isEmpty {
+                    self.messages[conversationId] = localMessages
+                    print("💾 Loaded \(localMessages.count) messages from local storage")
+                }
+            } catch {
+                print("⚠️ Failed to load local messages: \(error.localizedDescription)")
+            }
+        }
+        
+        // Then, observe Firestore for updates
         let listener = db.collection("conversations")
             .document(conversationId)
             .collection("messages")
@@ -125,7 +139,7 @@ class ChatService: ObservableObject {
                 }
                 
                 Task { @MainActor in
-                    let messages = documents.compactMap { doc -> Message? in
+                    let firestoreMessages = documents.compactMap { doc -> Message? in
                         let data = doc.data()
                         
                         return Message(
@@ -138,8 +152,28 @@ class ChatService: ObservableObject {
                         )
                     }
                     
-                    self.messages[conversationId] = messages
-                    print("✅ Loaded \(messages.count) messages for conversation")
+                    // Save to local storage
+                    for message in firestoreMessages {
+                        try? LocalStorageService.shared.saveMessage(message, status: message.status, isSynced: true)
+                    }
+                    
+                    // Merge with local messages (prefer Firestore if synced, keep local if pending)
+                    let localMessages = self.messages[conversationId] ?? []
+                    let pendingMessages = localMessages.filter { $0.status == "sending" || $0.status == "error" }
+                    
+                    // Combine: Firestore messages + pending local messages
+                    var mergedMessages = firestoreMessages
+                    for pendingMsg in pendingMessages {
+                        if !mergedMessages.contains(where: { $0.id == pendingMsg.id }) {
+                            mergedMessages.append(pendingMsg)
+                        }
+                    }
+                    
+                    // Sort by date
+                    mergedMessages.sort { $0.createdAt < $1.createdAt }
+                    
+                    self.messages[conversationId] = mergedMessages
+                    print("✅ Merged \(mergedMessages.count) messages (Firestore + local)")
                 }
             }
         
@@ -161,6 +195,32 @@ class ChatService: ObservableObject {
         
         print("📤 Sending message to conversation: \(conversationId)")
         
+        // Generate message ID upfront
+        let messageId = UUID().uuidString
+        
+        // Create local message immediately (optimistic UI)
+        let localMessage = Message(
+            id: messageId,
+            conversationId: conversationId,
+            senderId: senderId,
+            text: text,
+            createdAt: Date(),
+            status: "sending"
+        )
+        
+        // Save to local storage first (instant feedback)
+        do {
+            try LocalStorageService.shared.saveMessage(localMessage, status: "sending", isSynced: false)
+            
+            // Update local messages array immediately
+            var currentMessages = messages[conversationId] ?? []
+            currentMessages.append(localMessage)
+            messages[conversationId] = currentMessages
+        } catch {
+            print("⚠️ Failed to save message locally: \(error.localizedDescription)")
+        }
+        
+        // Then send to Firestore
         let messageData: [String: Any] = [
             "senderId": senderId,
             "text": text,
@@ -169,7 +229,7 @@ class ChatService: ObservableObject {
         ]
         
         let conversationRef = db.collection("conversations").document(conversationId)
-        let messageRef = conversationRef.collection("messages").document()
+        let messageRef = conversationRef.collection("messages").document(messageId)
         
         // Use batch write to update conversation and add message atomically
         let batch = db.batch()
@@ -186,9 +246,31 @@ class ChatService: ObservableObject {
         
         do {
             try await batch.commit()
-            print("✅ Message sent successfully")
+            print("✅ Message sent to Firestore")
+            
+            // Update local status to "sent" and mark as synced
+            try? LocalStorageService.shared.updateMessageStatus(messageId, status: "sent", isSynced: true)
+            
         } catch {
-            print("❌ Error sending message: \(error.localizedDescription)")
+            print("❌ Error sending message to Firestore: \(error.localizedDescription)")
+            
+            // Update local status to "error"
+            try? LocalStorageService.shared.updateMessageStatus(messageId, status: "error", isSynced: false)
+            
+            // Update UI
+            if var currentMessages = messages[conversationId],
+               let index = currentMessages.firstIndex(where: { $0.id == messageId }) {
+                currentMessages[index] = Message(
+                    id: messageId,
+                    conversationId: conversationId,
+                    senderId: senderId,
+                    text: text,
+                    createdAt: localMessage.createdAt,
+                    status: "error"
+                )
+                messages[conversationId] = currentMessages
+            }
+            
             throw error
         }
     }
@@ -255,6 +337,47 @@ class ChatService: ObservableObject {
             avatarURL: data["avatarURL"] as? String,
             createdAt: (data["createdAt"] as? Timestamp)?.dateValue() ?? Date()
         )
+    }
+    
+    // MARK: - Sync Pending Messages
+    
+    func syncPendingMessages() async {
+        print("🔄 Syncing pending messages...")
+        
+        do {
+            let pendingMessages = try LocalStorageService.shared.getPendingMessages()
+            print("📤 Found \(pendingMessages.count) pending messages to sync")
+            
+            for localMessage in pendingMessages {
+                let message = localMessage.toMessage()
+                
+                do {
+                    // Try to send to Firestore
+                    let messageData: [String: Any] = [
+                        "senderId": message.senderId,
+                        "text": message.text,
+                        "createdAt": Timestamp(date: message.createdAt),
+                        "status": "sent"
+                    ]
+                    
+                    let messageRef = db.collection("conversations")
+                        .document(message.conversationId)
+                        .collection("messages")
+                        .document(message.id)
+                    
+                    try await messageRef.setData(messageData)
+                    
+                    // Update local status
+                    try? LocalStorageService.shared.updateMessageStatus(message.id, status: "sent", isSynced: true)
+                    print("✅ Synced message: \(message.id)")
+                    
+                } catch {
+                    print("❌ Failed to sync message \(message.id): \(error.localizedDescription)")
+                }
+            }
+        } catch {
+            print("❌ Error fetching pending messages: \(error.localizedDescription)")
+        }
     }
     
     deinit {
