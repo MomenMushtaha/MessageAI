@@ -435,6 +435,27 @@ struct ConversationDetailView: View {
             .padding(8)
             .background(Color(.systemGray6))
             .cornerRadius(10)
+
+            // Navigation buttons
+            if !searchResults.isEmpty {
+                HStack(spacing: 8) {
+                    // Previous result
+                    Button(action: navigateToPreviousResult) {
+                        Image(systemName: "chevron.up")
+                            .foregroundColor(currentSearchIndex > 0 ? .blue : .secondary)
+                            .font(.system(size: 14))
+                    }
+                    .disabled(currentSearchIndex == 0)
+
+                    // Next result
+                    Button(action: navigateToNextResult) {
+                        Image(systemName: "chevron.down")
+                            .foregroundColor(currentSearchIndex < searchResults.count - 1 ? .blue : .secondary)
+                            .font(.system(size: 14))
+                    }
+                    .disabled(currentSearchIndex >= searchResults.count - 1)
+                }
+            }
         }
         .padding(.horizontal)
         .padding(.vertical, 8)
@@ -458,6 +479,22 @@ struct ConversationDetailView: View {
         currentSearchIndex = 0
 
         print("🔍 Search updated: \(searchResults.count) results for '\(searchText)'")
+    }
+
+    private func navigateToNextResult() {
+        guard !searchResults.isEmpty, currentSearchIndex < searchResults.count - 1 else {
+            return
+        }
+        currentSearchIndex += 1
+        print("🔍 Navigate to result \(currentSearchIndex + 1) of \(searchResults.count)")
+    }
+
+    private func navigateToPreviousResult() {
+        guard !searchResults.isEmpty, currentSearchIndex > 0 else {
+            return
+        }
+        currentSearchIndex -= 1
+        print("🔍 Navigate to result \(currentSearchIndex + 1) of \(searchResults.count)")
     }
 
     private func saveEditedMessage() {
