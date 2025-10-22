@@ -14,17 +14,22 @@ class ChatService: ObservableObject {
     @Published var conversations: [Conversation] = []
     @Published var messages: [String: [Message]] = [:] // conversationId -> messages
     @Published var allUsers: [User] = []
-    
+
     private let db = Firestore.firestore()
     private var conversationsListener: ListenerRegistration?
     private var messageListeners: [String: ListenerRegistration] = [:]
     private var conversationUpdateTask: Task<Void, Never>?
     private var messageUpdateTasks: [String: Task<Void, Never>] = [:]
-    
+
     // Performance optimizations
     private let messageProcessingQueue = DispatchQueue(label: "com.messageai.messageProcessing", qos: .userInitiated)
     private var messageCache: [String: [Message]] = [:] // In-memory cache for fast lookups
     private var lastMessageCount: [String: Int] = [:] // Track message counts to avoid redundant updates
+
+    // Pagination
+    private let messagesPerPage = 50
+    @Published var isLoadingMoreMessages: [String: Bool] = [:] // conversationId -> isLoading
+    @Published var hasMoreMessages: [String: Bool] = [:] // conversationId -> hasMore
     
     static let shared = ChatService()
     
@@ -137,7 +142,10 @@ class ChatService: ObservableObject {
         }
         
         print("👂 Starting to observe messages for conversation: \(conversationId)")
-        
+
+        // Initialize pagination state
+        hasMoreMessages[conversationId] = true
+
         // First, load from local storage (instant)
         Task { @MainActor in
             do {
@@ -153,12 +161,12 @@ class ChatService: ObservableObject {
             }
         }
         
-        // Then, observe Firestore for updates (limit to last 100 messages for performance)
+        // Then, observe Firestore for updates (limit to recent messages for performance)
         let listener = db.collection("conversations")
             .document(conversationId)
             .collection("messages")
             .order(by: "createdAt", descending: false)
-            .limit(toLast: 100)
+            .limit(toLast: messagesPerPage)
             .addSnapshotListener { [weak self] snapshot, error in
                 guard let self = self else { return }
                 
@@ -278,7 +286,98 @@ class ChatService: ObservableObject {
         messageListeners[conversationId] = nil
         print("🛑 Stopped observing messages for: \(conversationId)")
     }
-    
+
+    // MARK: - Pagination
+
+    /// Load older messages for a conversation
+    func loadOlderMessages(conversationId: String) async {
+        // Prevent multiple simultaneous loads
+        guard isLoadingMoreMessages[conversationId] != true else {
+            print("⚠️ Already loading more messages")
+            return
+        }
+
+        // Check if there are more messages to load
+        guard hasMoreMessages[conversationId] != false else {
+            print("📭 No more messages to load")
+            return
+        }
+
+        isLoadingMoreMessages[conversationId] = true
+
+        do {
+            // Get oldest message timestamp
+            let currentMessages = messages[conversationId] ?? []
+            guard let oldestMessage = currentMessages.first else {
+                print("⚠️ No current messages found")
+                isLoadingMoreMessages[conversationId] = false
+                hasMoreMessages[conversationId] = false
+                return
+            }
+
+            print("📥 Loading messages before \(oldestMessage.createdAt)")
+
+            // Query for older messages
+            let snapshot = try await db.collection("conversations")
+                .document(conversationId)
+                .collection("messages")
+                .order(by: "createdAt", descending: true)
+                .start(after: [Timestamp(date: oldestMessage.createdAt)])
+                .limit(to: messagesPerPage)
+                .getDocuments()
+
+            let olderMessages = snapshot.documents.compactMap { doc -> Message? in
+                let data = doc.data()
+
+                return Message(
+                    id: doc.documentID,
+                    conversationId: conversationId,
+                    senderId: data["senderId"] as? String ?? "",
+                    text: data["text"] as? String ?? "",
+                    createdAt: (data["createdAt"] as? Timestamp)?.dateValue() ?? Date(),
+                    status: data["status"] as? String ?? "sent",
+                    deliveredTo: data["deliveredTo"] as? [String] ?? [],
+                    readBy: data["readBy"] as? [String] ?? [],
+                    deletedBy: data["deletedBy"] as? [String],
+                    deletedForEveryone: data["deletedForEveryone"] as? Bool,
+                    editedAt: (data["editedAt"] as? Timestamp)?.dateValue(),
+                    editHistory: data["editHistory"] as? [String],
+                    reactions: data["reactions"] as? [String: [String]],
+                    mediaType: data["mediaType"] as? String,
+                    mediaURL: data["mediaURL"] as? String,
+                    thumbnailURL: data["thumbnailURL"] as? String
+                )
+            }
+
+            print("✅ Loaded \(olderMessages.count) older messages")
+
+            // Check if there are more messages
+            hasMoreMessages[conversationId] = olderMessages.count == messagesPerPage
+
+            // Merge with existing messages
+            if !olderMessages.isEmpty {
+                var updatedMessages = currentMessages
+                updatedMessages.insert(contentsOf: olderMessages, at: 0)
+                updatedMessages.sort { $0.createdAt < $1.createdAt }
+
+                messages[conversationId] = updatedMessages
+                messageCache[conversationId] = updatedMessages
+
+                // Save to local storage
+                Task.detached(priority: .background) {
+                    for message in olderMessages {
+                        try? await LocalStorageService.shared.saveMessage(message, status: message.status, isSynced: true)
+                    }
+                }
+            }
+
+            isLoadingMoreMessages[conversationId] = false
+        } catch {
+            print("❌ Error loading older messages: \(error.localizedDescription)")
+            isLoadingMoreMessages[conversationId] = false
+        }
+    }
+
     // MARK: - Show Notifications for New Messages
     
     private func showNotificationsForNewMessages(_ messages: [Message], conversationId: String) {
