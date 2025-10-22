@@ -841,36 +841,63 @@ class ChatService: ObservableObject {
             throw NSError(domain: "ChatService", code: 400, userInfo: [NSLocalizedDescriptionKey: "Message cannot be empty"])
         }
 
+        // Find message in local cache for optimistic update
+        guard var conversationMessages = messages[conversationId],
+              let messageIndex = conversationMessages.firstIndex(where: { $0.id == messageId }) else {
+            throw NSError(domain: "ChatService", code: 404, userInfo: [NSLocalizedDescriptionKey: "Message not found"])
+        }
+
+        let originalMessage = conversationMessages[messageIndex]
+
+        // Verify user can edit this message
+        guard originalMessage.canEdit(by: currentUserId) else {
+            throw NSError(domain: "ChatService", code: 403, userInfo: [NSLocalizedDescriptionKey: "You can only edit your own messages within 15 minutes"])
+        }
+
+        // OPTIMISTIC UPDATE: Update local state immediately
+        var updatedMessage = originalMessage
+        updatedMessage.text = trimmedText
+        updatedMessage.editedAt = Date()
+        conversationMessages[messageIndex] = updatedMessage
+        messages[conversationId] = conversationMessages
+
+        print("🔄 Optimistically updated message text")
+
         let messageRef = db.collection("conversations")
             .document(conversationId)
             .collection("messages")
             .document(messageId)
 
-        // Fetch the message to verify permissions and get original text
-        let messageDoc = try await messageRef.getDocument()
-        guard let message = try? messageDoc.data(as: Message.self) else {
-            throw NSError(domain: "ChatService", code: 404, userInfo: [NSLocalizedDescriptionKey: "Message not found"])
+        do {
+            print("✏️ Editing message \(messageId)")
+
+            // Prepare edit history
+            var editHistory = originalMessage.editHistory ?? []
+            editHistory.append(originalMessage.text) // Save original text
+
+            // Update Firestore
+            try await messageRef.updateData([
+                "text": trimmedText,
+                "editedAt": FieldValue.serverTimestamp(),
+                "editHistory": editHistory
+            ])
+
+            print("✅ Message edited successfully - confirmed by server")
+
+        } catch {
+            // ROLLBACK: Restore original message on failure
+            print("❌ Edit failed, rolling back to original text")
+
+            guard var messages = messages[conversationId],
+                  let index = messages.firstIndex(where: { $0.id == messageId }) else {
+                throw error
+            }
+
+            messages[index] = originalMessage
+            self.messages[conversationId] = messages
+
+            throw error
         }
-
-        // Verify user can edit this message
-        guard message.canEdit(by: currentUserId) else {
-            throw NSError(domain: "ChatService", code: 403, userInfo: [NSLocalizedDescriptionKey: "You can only edit your own messages within 15 minutes"])
-        }
-
-        print("✏️ Editing message \(messageId)")
-
-        // Prepare edit history
-        var editHistory = message.editHistory ?? []
-        editHistory.append(message.text) // Save original/previous text
-
-        // Update Firestore
-        try await messageRef.updateData([
-            "text": trimmedText,
-            "editedAt": FieldValue.serverTimestamp(),
-            "editHistory": editHistory
-        ])
-
-        print("✅ Message edited successfully")
     }
 
     // MARK: - Sync Pending Messages
