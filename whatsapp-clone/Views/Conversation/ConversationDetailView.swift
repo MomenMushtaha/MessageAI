@@ -15,6 +15,8 @@ struct ConversationDetailView: View {
     @ObservedObject var chatService = ChatService.shared
     @State private var messageText = ""
     @State private var isSending = false
+    @State private var participantUsers: [String: User] = [:] // userId -> User cache
+    @State private var showParticipantList = false
     @Environment(\.dismiss) private var dismiss
     
     var body: some View {
@@ -59,24 +61,38 @@ struct ConversationDetailView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .principal) {
-                VStack(spacing: 2) {
-                    Text(displayTitle)
-                        .font(.headline)
-                    
-                    if conversation.type == .direct {
-                        Text("Tap to view profile")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    } else {
-                        Text("\(conversation.participantIds.count) participants")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+                Button(action: {
+                    if conversation.type == .group {
+                        showParticipantList = true
+                    }
+                }) {
+                    VStack(spacing: 2) {
+                        Text(displayTitle)
+                            .font(.headline)
+                        
+                        if conversation.type == .direct {
+                            Text("Tap to view profile")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        } else {
+                            Text("\(conversation.participantIds.count) participants")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
                     }
                 }
+                .buttonStyle(.plain)
             }
+        }
+        .sheet(isPresented: $showParticipantList) {
+            ParticipantListView(
+                participantIds: conversation.participantIds,
+                participantUsers: participantUsers
+            )
         }
         .onAppear {
             chatService.observeMessages(conversationId: conversation.id)
+            loadParticipantUsers()
         }
         .onDisappear {
             chatService.stopObservingMessages(conversationId: conversation.id)
@@ -158,9 +174,39 @@ struct ConversationDetailView: View {
             return "You"
         }
         
-        // For group chats, show sender name
-        // You could enhance this by fetching user names
-        return "User"
+        // Return cached user name if available
+        if let user = participantUsers[message.senderId] {
+            return user.displayName
+        }
+        
+        // Fetch user asynchronously if not in cache
+        if !participantUsers.keys.contains(message.senderId) {
+            Task {
+                if let user = try? await chatService.getUser(userId: message.senderId) {
+                    await MainActor.run {
+                        participantUsers[message.senderId] = user
+                    }
+                }
+            }
+        }
+        
+        return "Loading..."
+    }
+    
+    private func loadParticipantUsers() {
+        guard conversation.type == .group else { return }
+        
+        Task {
+            for participantId in conversation.participantIds {
+                if participantUsers[participantId] == nil {
+                    if let user = try? await chatService.getUser(userId: participantId) {
+                        await MainActor.run {
+                            participantUsers[participantId] = user
+                        }
+                    }
+                }
+            }
+        }
     }
     
     private func sendMessage() async {
@@ -263,6 +309,69 @@ struct MessageBubbleRow: View {
     }
 }
 
+struct ParticipantListView: View {
+    let participantIds: [String]
+    let participantUsers: [String: User]
+    
+    @Environment(\.dismiss) private var dismiss
+    
+    var body: some View {
+        NavigationStack {
+            List {
+                Section {
+                    ForEach(participantIds, id: \.self) { participantId in
+                        if let user = participantUsers[participantId] {
+                            HStack(spacing: 12) {
+                                Circle()
+                                    .fill(Color.blue)
+                                    .frame(width: 40, height: 40)
+                                    .overlay {
+                                        Text(user.initials)
+                                            .font(.subheadline)
+                                            .foregroundStyle(.white)
+                                    }
+                                
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(user.displayName)
+                                        .font(.headline)
+                                    
+                                    Text(user.email)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                        } else {
+                            HStack(spacing: 12) {
+                                Circle()
+                                    .fill(Color.gray)
+                                    .frame(width: 40, height: 40)
+                                    .overlay {
+                                        ProgressView()
+                                            .tint(.white)
+                                    }
+                                
+                                Text("Loading...")
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                } header: {
+                    Text("\(participantIds.count) Participants")
+                }
+            }
+            .navigationTitle("Group Info")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("Done") {
+                        dismiss()
+                    }
+                }
+            }
+        }
+    }
+}
+
 #Preview {
     NavigationStack {
         ConversationDetailView(
@@ -274,7 +383,8 @@ struct MessageBubbleRow: View {
             otherUser: User(
                 id: "user2",
                 displayName: "John Doe",
-                email: "john@example.com"
+                email: "john@example.com",
+                createdAt: Date()
             )
         )
     }

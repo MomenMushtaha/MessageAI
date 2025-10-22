@@ -12,6 +12,7 @@ struct ChatListView: View {
     @ObservedObject var chatService = ChatService.shared
     @State private var searchText = ""
     @State private var showingNewChat = false
+    @State private var showingNewGroup = false
     @State private var selectedConversationId: String?
     @State private var showLogoutConfirmation = false
     @State private var conversationUsers: [String: User] = [:] // userId -> User
@@ -75,7 +76,15 @@ struct ChatListView: View {
                 }
                 
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    Button(action: { showingNewChat = true }) {
+                    Menu {
+                        Button(action: { showingNewChat = true }) {
+                            Label("New Chat", systemImage: "message")
+                        }
+                        
+                        Button(action: { showingNewGroup = true }) {
+                            Label("New Group", systemImage: "person.3")
+                        }
+                    } label: {
                         Image(systemName: "square.and.pencil")
                             .font(.title3)
                     }
@@ -83,6 +92,11 @@ struct ChatListView: View {
             }
             .sheet(isPresented: $showingNewChat) {
                 NewChatView(onConversationCreated: { conversationId in
+                    selectedConversationId = conversationId
+                })
+            }
+            .sheet(isPresented: $showingNewGroup) {
+                NewGroupView(onConversationCreated: { conversationId in
                     selectedConversationId = conversationId
                 })
             }
