@@ -136,29 +136,107 @@ class PresenceService: ObservableObject {
     }
     
     // MARK: - Observe User Presence
-    
+
     func observeUserPresence(userId: String, completion: @escaping (Bool, Date?) -> Void) -> ListenerRegistration {
         print("👀 Observing presence for user: \(userId)")
-        
+
         return db.collection("users").document(userId)
             .addSnapshotListener { snapshot, error in
                 if let error = error {
                     print("❌ Error observing presence: \(error.localizedDescription)")
                     return
                 }
-                
+
                 guard let data = snapshot?.data() else {
                     completion(false, nil)
                     return
                 }
-                
+
                 let isOnline = data["isOnline"] as? Bool ?? false
                 let lastSeen = (data["lastSeen"] as? Timestamp)?.dateValue()
-                
+
                 completion(isOnline, lastSeen)
             }
     }
-    
+
+    // MARK: - Typing Indicators
+
+    func startTyping(userId: String, conversationId: String) async {
+        do {
+            let typingData: [String: Any] = [
+                "userId": userId,
+                "conversationId": conversationId,
+                "isTyping": true,
+                "lastTypingAt": FieldValue.serverTimestamp()
+            ]
+
+            try await db.collection("conversations")
+                .document(conversationId)
+                .collection("typing")
+                .document(userId)
+                .setData(typingData, merge: true)
+
+            print("⌨️ Started typing in conversation: \(conversationId)")
+        } catch {
+            print("❌ Error starting typing: \(error.localizedDescription)")
+        }
+    }
+
+    func stopTyping(userId: String, conversationId: String) async {
+        do {
+            let typingData: [String: Any] = [
+                "isTyping": false,
+                "lastTypingAt": FieldValue.serverTimestamp()
+            ]
+
+            try await db.collection("conversations")
+                .document(conversationId)
+                .collection("typing")
+                .document(userId)
+                .setData(typingData, merge: true)
+
+            print("⌨️ Stopped typing in conversation: \(conversationId)")
+        } catch {
+            print("❌ Error stopping typing: \(error.localizedDescription)")
+        }
+    }
+
+    func observeTypingStatus(conversationId: String, currentUserId: String, completion: @escaping ([TypingStatus]) -> Void) -> ListenerRegistration {
+        print("👀 Observing typing status for conversation: \(conversationId)")
+
+        return db.collection("conversations")
+            .document(conversationId)
+            .collection("typing")
+            .addSnapshotListener { snapshot, error in
+                if let error = error {
+                    print("❌ Error observing typing status: \(error.localizedDescription)")
+                    completion([])
+                    return
+                }
+
+                guard let documents = snapshot?.documents else {
+                    completion([])
+                    return
+                }
+
+                let typingStatuses = documents.compactMap { doc -> TypingStatus? in
+                    do {
+                        let status = try doc.data(as: TypingStatus.self)
+                        // Filter out current user and expired statuses
+                        if status.id != currentUserId && status.isActivelyTyping {
+                            return status
+                        }
+                        return nil
+                    } catch {
+                        print("❌ Error decoding typing status: \(error.localizedDescription)")
+                        return nil
+                    }
+                }
+
+                completion(typingStatuses)
+            }
+    }
+
     deinit {
         heartbeatTimer?.invalidate()
         heartbeatTimer = nil
