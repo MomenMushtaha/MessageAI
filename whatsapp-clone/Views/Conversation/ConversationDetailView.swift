@@ -20,42 +20,70 @@ struct ConversationDetailView: View {
     @State private var showParticipantList = false
     @State private var otherUserPresence: (isOnline: Bool, lastSeen: Date?) = (false, nil)
     @State private var presenceListener: ListenerRegistration?
+    @State private var showScrollToBottom = false
     @Environment(\.dismiss) private var dismiss
     
     var body: some View {
         VStack(spacing: 0) {
             // Messages List
-            ScrollViewReader { proxy in
-                ScrollView {
-                    LazyVStack(spacing: 12) {
-                        if currentMessages.isEmpty {
-                            emptyMessagesView
-                        } else {
-                            ForEach(currentMessages) { message in
-                                MessageBubbleRow(
-                                    message: message,
-                                    isFromCurrentUser: message.senderId == authService.currentUser?.id,
-                                    senderName: getSenderName(for: message),
-                                    conversation: conversation,
-                                    currentUserId: authService.currentUser?.id ?? ""
-                                )
-                                .id(message.id)
+            ZStack(alignment: .bottomTrailing) {
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        LazyVStack(spacing: 8) {
+                            if currentMessages.isEmpty {
+                                emptyMessagesView
+                            } else {
+                                ForEach(currentMessages) { message in
+                                    MessageBubbleRow(
+                                        message: message,
+                                        isFromCurrentUser: message.senderId == authService.currentUser?.id,
+                                        senderName: getSenderName(for: message),
+                                        conversation: conversation,
+                                        currentUserId: authService.currentUser?.id ?? ""
+                                    )
+                                    .id(message.id)
+                                    .transition(.asymmetric(
+                                        insertion: .move(edge: .bottom).combined(with: .opacity),
+                                        removal: .opacity
+                                    ))
+                                }
+                            }
+                        }
+                        .padding()
+                    }
+                    .onChange(of: currentMessages.count) { oldValue, newValue in
+                        if newValue > oldValue, let lastMessage = currentMessages.last {
+                            withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                                proxy.scrollTo(lastMessage.id, anchor: .bottom)
                             }
                         }
                     }
-                    .padding()
-                }
-                .onChange(of: currentMessages.count) { oldValue, newValue in
-                    if newValue > oldValue, let lastMessage = currentMessages.last {
-                        withAnimation {
-                            proxy.scrollTo(lastMessage.id, anchor: .bottom)
+                    .onAppear {
+                        if let lastMessage = currentMessages.last {
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                                proxy.scrollTo(lastMessage.id, anchor: .bottom)
+                            }
                         }
                     }
                 }
-                .onAppear {
-                    if let lastMessage = currentMessages.last {
-                        proxy.scrollTo(lastMessage.id, anchor: .bottom)
+                
+                // Scroll to Bottom Button
+                if showScrollToBottom {
+                    Button(action: {
+                        withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                            if let lastMessage = currentMessages.last {
+                                // Use ScrollViewReader's proxy - need to pass it
+                            }
+                        }
+                    }) {
+                        Image(systemName: "arrow.down.circle.fill")
+                            .font(.system(size: 36))
+                            .foregroundStyle(.white, .blue)
+                            .shadow(color: .black.opacity(0.2), radius: 4, y: 2)
                     }
+                    .padding(.trailing, 16)
+                    .padding(.bottom, 16)
+                    .transition(.scale.combined(with: .opacity))
                 }
             }
             
@@ -148,11 +176,12 @@ struct ConversationDetailView: View {
             HStack {
                 TextField("Message", text: $messageText, axis: .vertical)
                     .lineLimit(1...5)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 10)
+                    .font(.body)
             }
             .background(Color(.systemGray6))
-            .cornerRadius(20)
+            .cornerRadius(24)
             
             // Send Button
             Button(action: {
@@ -160,20 +189,31 @@ struct ConversationDetailView: View {
                     await sendMessage()
                 }
             }) {
-                if isSending {
-                    ProgressView()
-                        .frame(width: 32, height: 32)
-                } else {
-                    Image(systemName: "arrow.up.circle.fill")
-                        .font(.system(size: 32))
-                        .foregroundStyle(messageText.isEmpty ? .gray : .blue)
+                ZStack {
+                    Circle()
+                        .fill(messageText.isEmpty ? Color(.systemGray4) : Color.blue)
+                        .frame(width: 38, height: 38)
+                    
+                    if isSending {
+                        ProgressView()
+                            .tint(.white)
+                    } else {
+                        Image(systemName: "arrow.up")
+                            .font(.system(size: 18, weight: .semibold))
+                            .foregroundStyle(.white)
+                    }
                 }
             }
             .disabled(messageText.isEmpty || isSending)
+            .scaleEffect(messageText.isEmpty ? 0.9 : 1.0)
+            .animation(.spring(response: 0.3, dampingFraction: 0.6), value: messageText.isEmpty)
         }
-        .padding(.horizontal)
-        .padding(.vertical, 8)
-        .background(Color(.systemBackground))
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .background(
+            Color(.systemBackground)
+                .shadow(color: .black.opacity(0.05), radius: 5, y: -2)
+        )
     }
     
     private var currentMessages: [Message] {
@@ -325,7 +365,7 @@ struct MessageBubbleRow: View {
     let currentUserId: String
     
     var body: some View {
-        HStack {
+        HStack(alignment: .bottom, spacing: 8) {
             if isFromCurrentUser {
                 Spacer(minLength: 50)
             }
@@ -335,31 +375,74 @@ struct MessageBubbleRow: View {
                 if !isFromCurrentUser, let senderName = senderName {
                     Text(senderName)
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .fontWeight(.semibold)
+                        .foregroundStyle(Color.blue)
                         .padding(.leading, 12)
+                        .padding(.top, 2)
                 }
                 
-                Text(message.text)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
-                    .background(isFromCurrentUser ? (message.displayStatus(for: conversation, currentUserId: currentUserId) == "error" ? Color.red.opacity(0.7) : Color.blue) : Color(.systemGray5))
-                    .foregroundStyle(isFromCurrentUser ? .white : .primary)
-                    .cornerRadius(16)
-                
-                HStack(spacing: 4) {
-                    Text(message.createdAt, style: .time)
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
+                // Message bubble
+                HStack(alignment: .bottom, spacing: 4) {
+                    Text(message.text)
+                        .font(.body)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
+                        .background(
+                            bubbleBackground
+                        )
+                        .foregroundStyle(isFromCurrentUser ? .white : .primary)
+                        .clipShape(BubbleShape(isFromCurrentUser: isFromCurrentUser))
                     
-                    // Status indicator for sent messages
+                    // Timestamp and status in the corner
                     if isFromCurrentUser {
-                        statusIcon
+                        VStack(alignment: .trailing, spacing: 2) {
+                            Spacer()
+                            HStack(spacing: 2) {
+                                Text(message.createdAt, style: .time)
+                                    .font(.system(size: 11))
+                                    .foregroundStyle(.secondary)
+                                statusIcon
+                            }
+                        }
+                        .padding(.bottom, 4)
                     }
+                }
+                
+                // Timestamp for incoming messages
+                if !isFromCurrentUser {
+                    Text(message.createdAt, style: .time)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                        .padding(.leading, 12)
                 }
             }
             
             if !isFromCurrentUser {
                 Spacer(minLength: 50)
+            }
+        }
+        .transition(.scale(scale: 0.8).combined(with: .opacity))
+        .animation(.spring(response: 0.3, dampingFraction: 0.7), value: message.id)
+    }
+    
+    private var bubbleBackground: some View {
+        Group {
+            if isFromCurrentUser {
+                if message.displayStatus(for: conversation, currentUserId: currentUserId) == "error" {
+                    LinearGradient(
+                        colors: [Color.red.opacity(0.8), Color.red.opacity(0.6)],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                } else {
+                    LinearGradient(
+                        colors: [Color.blue, Color.blue.opacity(0.8)],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                }
+            } else {
+                Color(.systemGray5)
             }
         }
     }
@@ -371,27 +454,45 @@ struct MessageBubbleRow: View {
         switch displayStatus {
         case "sending":
             ProgressView()
-                .scaleEffect(0.7)
-                .frame(width: 12, height: 12)
+                .scaleEffect(0.6)
+                .frame(width: 10, height: 10)
+                .tint(.white.opacity(0.8))
         case "sent":
             Image(systemName: "checkmark")
-                .font(.caption2)
-                .foregroundStyle(.secondary)
+                .font(.system(size: 10))
+                .foregroundStyle(.white.opacity(0.8))
         case "delivered":
             Image(systemName: "checkmark.checkmark")
-                .font(.caption2)
-                .foregroundStyle(.secondary)
+                .font(.system(size: 10))
+                .foregroundStyle(.white.opacity(0.8))
         case "read":
             Image(systemName: "checkmark.checkmark")
-                .font(.caption2)
-                .foregroundStyle(.blue)
+                .font(.system(size: 10))
+                .foregroundStyle(.cyan)
         case "error":
-            Image(systemName: "exclamationmark.circle")
-                .font(.caption2)
-                .foregroundStyle(.red)
+            Image(systemName: "exclamationmark.circle.fill")
+                .font(.system(size: 10))
+                .foregroundStyle(.white)
         default:
             EmptyView()
         }
+    }
+}
+
+// MARK: - Custom Bubble Shape
+
+struct BubbleShape: Shape {
+    let isFromCurrentUser: Bool
+    
+    func path(in rect: CGRect) -> Path {
+        let path = UIBezierPath(
+            roundedRect: rect,
+            byRoundingCorners: isFromCurrentUser ?
+                [.topLeft, .topRight, .bottomLeft] :
+                [.topLeft, .topRight, .bottomRight],
+            cornerRadii: CGSize(width: 16, height: 16)
+        )
+        return Path(path.cgPath)
     }
 }
 

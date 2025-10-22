@@ -52,13 +52,20 @@ struct ChatListView: View {
                                     otherUser: getOtherUser(for: conversation)
                                 )
                                 .onTapGesture {
-                                    selectedConversationId = conversation.id
+                                    withAnimation(.easeInOut(duration: 0.2)) {
+                                        selectedConversationId = conversation.id
+                                    }
                                 }
+                                .transition(.asymmetric(
+                                    insertion: .move(edge: .leading).combined(with: .opacity),
+                                    removal: .opacity
+                                ))
                                 
                                 Divider()
                                     .padding(.leading, 76)
                             }
                         }
+                        .animation(.spring(response: 0.3, dampingFraction: 0.8), value: chatService.conversations.count)
                     }
                 }
             }
@@ -244,27 +251,29 @@ struct ConversationRow: View {
             VStack(alignment: .leading, spacing: 4) {
                 HStack {
                     Text(displayName)
-                        .font(.headline)
+                        .font(.system(size: 17, weight: .semibold))
                     
                     Spacer()
                     
                     if let lastMessageAt = conversation.lastMessageAt {
                         Text(lastMessageAt, style: .relative)
-                            .font(.caption)
+                            .font(.system(size: 13))
                             .foregroundStyle(.secondary)
                     }
                 }
                 
                 if let lastMessage = conversation.lastMessageText {
                     Text(lastMessage)
-                        .font(.subheadline)
+                        .font(.system(size: 15))
                         .foregroundStyle(.secondary)
-                        .lineLimit(1)
+                        .lineLimit(2)
                 }
             }
         }
         .padding(.horizontal)
-        .padding(.vertical, 8)
+        .padding(.vertical, 12)
+        .background(Color(.systemBackground))
+        .contentShape(Rectangle())
     }
     
     private var displayName: String {
