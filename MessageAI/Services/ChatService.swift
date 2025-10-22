@@ -900,6 +900,34 @@ class ChatService: ObservableObject {
         }
     }
 
+    // MARK: - Message Search
+
+    /// Search messages in a conversation
+    /// - Parameters:
+    ///   - conversationId: The conversation to search in
+    ///   - query: The search query string
+    /// - Returns: Array of messages matching the query
+    func searchMessages(conversationId: String, query: String) -> [Message] {
+        guard !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return []
+        }
+
+        let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+
+        // Search in cached messages (local first for speed)
+        guard let allMessages = messages[conversationId] else {
+            return []
+        }
+
+        // Filter messages that contain the query (case-insensitive)
+        let results = allMessages.filter { message in
+            message.text.lowercased().contains(trimmedQuery)
+        }
+
+        print("🔍 Found \(results.count) messages matching '\(query)'")
+        return results
+    }
+
     // MARK: - Sync Pending Messages
     
     func syncPendingMessages() async {
