@@ -32,6 +32,10 @@ struct ConversationDetailView: View {
     @State private var isEditMode = false // Edit mode active
     @State private var editingMessageId: String? // ID of message being edited
     @State private var editingText = "" // Text being edited
+    @State private var isSearching = false // Search mode active
+    @State private var searchText = "" // Search query
+    @State private var searchResults: [Message] = [] // Filtered search results
+    @State private var currentSearchIndex = 0 // Current result index for navigation
     @Environment(\.dismiss) private var dismiss
     
     var body: some View {
