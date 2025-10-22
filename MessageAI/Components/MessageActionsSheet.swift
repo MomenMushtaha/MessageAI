@@ -10,6 +10,7 @@ import SwiftUI
 struct MessageActionsSheet: View {
     let message: Message
     let currentUserId: String
+    let onEdit: () -> Void // Callback when edit is tapped
     let onDelete: (Bool) -> Void // Parameter: deleteForEveryone
     let onDismiss: () -> Void
 
@@ -43,6 +44,29 @@ struct MessageActionsSheet: View {
             .padding(.vertical, 8)
 
             Divider()
+
+            // Edit (only if editable)
+            if message.canEdit(by: currentUserId) {
+                Button(action: {
+                    onEdit()
+                }) {
+                    HStack(spacing: 12) {
+                        Image(systemName: "pencil")
+                            .font(.body)
+                            .foregroundColor(.blue)
+                            .frame(width: 24)
+
+                        Text("Edit")
+                            .foregroundColor(.primary)
+
+                        Spacer()
+                    }
+                    .padding()
+                    .background(Color(.systemBackground))
+                }
+
+                Divider()
+            }
 
             // Delete for me
             Button(action: {
@@ -127,6 +151,9 @@ struct MessageActionsSheet: View {
                 status: "sent"
             ),
             currentUserId: "u1",
+            onEdit: {
+                print("Edit tapped")
+            },
             onDelete: { deleteForEveryone in
                 print("Delete tapped: deleteForEveryone=\(deleteForEveryone)")
             },
