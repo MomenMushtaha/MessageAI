@@ -12,8 +12,10 @@ struct MainAppView: View {
     @StateObject private var authService = AuthService.shared
     @StateObject private var networkMonitor = NetworkMonitor.shared
     @StateObject private var chatService = ChatService.shared
+    @StateObject private var notificationService = NotificationService.shared
     @State private var showSignUp = false
     @State private var hasShownInitialSync = false
+    @State private var navigationPath = NavigationPath()
     
     var body: some View {
         ZStack(alignment: .top) {
@@ -50,6 +52,16 @@ struct MainAppView: View {
             // Offline Banner
             OfflineBanner(isConnected: networkMonitor.isConnected)
                 .animation(.easeInOut, value: networkMonitor.isConnected)
+            
+            // In-App Notification Banner
+            if authService.isAuthenticated {
+                InAppNotificationBannerContainer(
+                    onNotificationTapped: { conversationId in
+                        // Handle navigation to conversation
+                        print("📱 Navigate to conversation: \(conversationId)")
+                    }
+                )
+            }
         }
         .onChange(of: networkMonitor.isConnected) { oldValue, newValue in
             if !oldValue && newValue && authService.isAuthenticated {

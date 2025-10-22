@@ -176,8 +176,19 @@ class ChatService: ObservableObject {
                     // Sort by date
                     mergedMessages.sort { $0.createdAt < $1.createdAt }
                     
+                    // Detect new messages for notifications
+                    let previousMessages = self.messages[conversationId] ?? []
+                    let newMessages = mergedMessages.filter { newMsg in
+                        !previousMessages.contains(where: { $0.id == newMsg.id })
+                    }
+                    
                     self.messages[conversationId] = mergedMessages
                     print("✅ Merged \(mergedMessages.count) messages (Firestore + local)")
+                    
+                    // Show notifications for new incoming messages
+                    if !newMessages.isEmpty {
+                        self.showNotificationsForNewMessages(newMessages, conversationId: conversationId)
+                    }
                 }
             }
         
@@ -188,6 +199,42 @@ class ChatService: ObservableObject {
         messageListeners[conversationId]?.remove()
         messageListeners[conversationId] = nil
         print("🛑 Stopped observing messages for: \(conversationId)")
+    }
+    
+    // MARK: - Show Notifications for New Messages
+    
+    private func showNotificationsForNewMessages(_ messages: [Message], conversationId: String) {
+        guard let currentUserId = AuthService.shared.currentUser?.id else { return }
+        
+        // Filter out messages from current user
+        let incomingMessages = messages.filter { $0.senderId != currentUserId }
+        
+        guard !incomingMessages.isEmpty else { return }
+        
+        // Show notification for the most recent incoming message
+        if let latestMessage = incomingMessages.last {
+            // Get conversation to determine if it's a group
+            let conversation = conversations.first(where: { $0.id == conversationId })
+            let isGroup = conversation?.type == .group
+            
+            // Get sender name
+            Task {
+                var senderName = "Unknown"
+                if let user = try? await getUser(userId: latestMessage.senderId) {
+                    senderName = user.displayName
+                }
+                
+                // Show notification
+                NotificationService.shared.showNotification(
+                    conversationId: conversationId,
+                    senderName: senderName,
+                    messageText: latestMessage.text,
+                    senderId: latestMessage.senderId,
+                    currentUserId: currentUserId,
+                    isGroupChat: isGroup
+                )
+            }
+        }
     }
     
     // MARK: - Mark Messages as Delivered

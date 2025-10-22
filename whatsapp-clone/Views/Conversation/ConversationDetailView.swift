@@ -107,10 +107,16 @@ struct ConversationDetailView: View {
             loadParticipantUsers()
             markMessagesAsDeliveredAndRead()
             startObservingPresence()
+            
+            // Track current conversation for notifications
+            NotificationService.shared.setCurrentConversation(conversation.id)
         }
         .onDisappear {
             chatService.stopObservingMessages(conversationId: conversation.id)
             stopObservingPresence()
+            
+            // Clear current conversation
+            NotificationService.shared.setCurrentConversation(nil)
         }
     }
     

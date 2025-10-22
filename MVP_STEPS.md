@@ -45,6 +45,16 @@
 - ChatListView shows green dot for online users
 - Presence tracking starts on login, stops on logout
 
+✅ **Step 8: In-App Foreground Notifications - COMPLETED**
+- NotificationService created for managing in-app notifications
+- InAppNotificationBanner component with slide-in animation
+- Notifications show sender name, avatar, and message preview
+- Auto-dismiss after 4 seconds with manual dismiss option
+- Only shows for incoming messages (not from current user)
+- Doesn't show when conversation is already open
+- Tap notification to navigate to conversation
+- No Apple developer account required (local notifications only)
+
 ## Next Steps
 
 ### 🎯 Step 1: Basic UI Structure & Navigation
