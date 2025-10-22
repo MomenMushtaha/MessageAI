@@ -123,5 +123,30 @@ class LocalStorageService {
         try modelContext.save()
         print("🗑️ Deleted \(oldMessages.count) old messages")
     }
+    
+    /// Delete all messages for a specific conversation
+    func deleteMessages(for conversationId: String) throws {
+        let predicate = #Predicate<LocalMessage> { $0.conversationId == conversationId }
+        let descriptor = FetchDescriptor(predicate: predicate)
+        
+        let messages = try modelContext.fetch(descriptor)
+        for message in messages {
+            modelContext.delete(message)
+        }
+        try modelContext.save()
+        print("🗑️ Deleted \(messages.count) local messages for conversation: \(conversationId)")
+    }
+    
+    /// Delete a specific conversation
+    func deleteConversation(id conversationId: String) throws {
+        let predicate = #Predicate<LocalConversation> { $0.id == conversationId }
+        let descriptor = FetchDescriptor(predicate: predicate)
+        
+        if let conversation = try modelContext.fetch(descriptor).first {
+            modelContext.delete(conversation)
+            try modelContext.save()
+            print("🗑️ Deleted local conversation: \(conversationId)")
+        }
+    }
 }
 

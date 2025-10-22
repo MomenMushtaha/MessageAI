@@ -566,6 +566,54 @@ class ChatService: ObservableObject {
         return conversationId
     }
     
+    // MARK: - Delete Conversation
+    
+    /// Deletes a conversation and all its messages
+    func deleteConversation(conversationId: String) async throws {
+        print("🗑️ Deleting conversation: \(conversationId)")
+        
+        // Optimistically remove from local array first for instant UI feedback
+        conversations.removeAll { $0.id == conversationId }
+        messages.removeValue(forKey: conversationId)
+        
+        // Stop listening to messages for this conversation
+        if let listener = messageListeners[conversationId] {
+            listener.remove()
+            messageListeners.removeValue(forKey: conversationId)
+        }
+        
+        do {
+            // Delete all messages in the conversation
+            let messagesSnapshot = try await db.collection("conversations")
+                .document(conversationId)
+                .collection("messages")
+                .getDocuments()
+            
+            // Batch delete messages for efficiency
+            let batch = db.batch()
+            for document in messagesSnapshot.documents {
+                batch.deleteDocument(document.reference)
+            }
+            try await batch.commit()
+            print("✅ Deleted \(messagesSnapshot.documents.count) messages")
+            
+            // Delete the conversation document
+            try await db.collection("conversations").document(conversationId).delete()
+            print("✅ Conversation deleted successfully")
+            
+            // Clear local storage for this conversation (on main actor)
+            await MainActor.run {
+                try? LocalStorageService.shared.deleteMessages(for: conversationId)
+                try? LocalStorageService.shared.deleteConversation(id: conversationId)
+            }
+            
+        } catch {
+            print("❌ Error deleting conversation: \(error.localizedDescription)")
+            // Re-throw so UI can handle the error
+            throw error
+        }
+    }
+    
     // MARK: - Get User
     
     func getUser(userId: String) async throws -> User? {

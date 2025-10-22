@@ -17,6 +17,8 @@ struct ChatListView: View {
     @State private var showLogoutConfirmation = false
     @State private var conversationUsers: [String: User] = [:] // userId -> User
     @State private var isLoadingUsers = false
+    @State private var showDeleteError = false
+    @State private var deleteErrorMessage = ""
     
     var body: some View {
         NavigationStack {
@@ -44,23 +46,39 @@ struct ChatListView: View {
                 if chatService.conversations.isEmpty {
                     emptyStateView
                 } else {
-                    ScrollView {
-                        LazyVStack(spacing: 0) {
-                            ForEach(filteredConversations) { conversation in
-                                ConversationRow(
-                                    conversation: conversation,
-                                    currentUserId: authService.currentUser?.id ?? "",
-                                    otherUser: conversationUsers[getOtherUserId(for: conversation) ?? ""]
-                                )
-                                .onTapGesture {
-                                    selectedConversationId = conversation.id
-                                }
-                                
-                                Divider()
-                                    .padding(.leading, 76)
+                    List {
+                        ForEach(filteredConversations) { conversation in
+                            ConversationRow(
+                                conversation: conversation,
+                                currentUserId: authService.currentUser?.id ?? "",
+                                otherUser: conversationUsers[getOtherUserId(for: conversation) ?? ""]
+                            )
+                            .listRowInsets(EdgeInsets())
+                            .listRowSeparator(.hidden)
+                            .contentShape(Rectangle())
+                            .onTapGesture {
+                                selectedConversationId = conversation.id
                             }
+                            .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                                Button(role: .destructive) {
+                                    deleteConversation(conversation)
+                                } label: {
+                                    Label("Delete", systemImage: "trash")
+                                }
+                            }
+                            .contextMenu {
+                                Button(role: .destructive) {
+                                    deleteConversation(conversation)
+                                } label: {
+                                    Label("Delete \(conversation.type == .group ? "Group" : "Chat")", systemImage: "trash")
+                                }
+                            }
+                            
+                            Divider()
+                                .padding(.leading, 76)
                         }
                     }
+                    .listStyle(.plain)
                     .scrollDismissesKeyboard(.interactively)
                 }
             }
@@ -149,6 +167,11 @@ struct ChatListView: View {
                 }
                 Button("Cancel", role: .cancel) {}
             }
+            .alert("Delete Failed", isPresented: $showDeleteError) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(deleteErrorMessage)
+            }
             .onAppear {
                 startObservingConversations()
                 preloadConversationUsers()
@@ -224,6 +247,24 @@ struct ChatListView: View {
             try authService.logout()
         } catch {
             print("Logout error: \(error.localizedDescription)")
+        }
+    }
+    
+    private func deleteConversation(_ conversation: Conversation) {
+        Task {
+            do {
+                try await chatService.deleteConversation(conversationId: conversation.id)
+                print("✅ Successfully deleted conversation")
+                
+                // If we're currently viewing this conversation, navigate away
+                if selectedConversationId == conversation.id {
+                    selectedConversationId = nil
+                }
+            } catch {
+                deleteErrorMessage = "Failed to delete \(conversation.type == .group ? "group" : "chat"): \(error.localizedDescription)"
+                showDeleteError = true
+                print("❌ Error deleting conversation: \(error.localizedDescription)")
+            }
         }
     }
     
