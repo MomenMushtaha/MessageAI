@@ -339,6 +339,9 @@ struct ConversationDetailView: View {
                         .padding(.horizontal, 16)
                         .padding(.vertical, 10)
                         .font(.body)
+                        .onChange(of: messageText) { oldValue, newValue in
+                            handleTypingChange(oldValue: oldValue, newValue: newValue)
+                        }
                 }
                 .background(Color(.systemGray6))
                 .cornerRadius(24)
@@ -560,6 +563,51 @@ struct ConversationDetailView: View {
         currentSearchIndex = 0
         isSearching = false
         print("🔍 Search cleared")
+    }
+
+    // MARK: - Typing Indicators
+
+    private func handleTypingChange(oldValue: String, newValue: String) {
+        guard let userId = authService.currentUser?.id else { return }
+
+        // User started typing (went from empty to non-empty, or changed text)
+        if !newValue.isEmpty && oldValue != newValue {
+            if !isCurrentUserTyping {
+                isCurrentUserTyping = true
+                Task {
+                    await PresenceService.shared.startTyping(userId: userId, conversationId: conversation.id)
+                }
+            }
+
+            // Reset the auto-stop timer
+            resetTypingTimer(userId: userId)
+        }
+        // User cleared text
+        else if newValue.isEmpty && isCurrentUserTyping {
+            stopTypingIndicator(userId: userId)
+        }
+    }
+
+    private func resetTypingTimer(userId: String) {
+        // Cancel existing timer
+        typingTimer?.invalidate()
+
+        // Start new 3-second timer
+        typingTimer = Timer.scheduledTimer(withTimeInterval: 3.0, repeats: false) { _ in
+            Task { @MainActor in
+                await PresenceService.shared.stopTyping(userId: userId, conversationId: self.conversation.id)
+            }
+        }
+    }
+
+    private func stopTypingIndicator(userId: String) {
+        isCurrentUserTyping = false
+        typingTimer?.invalidate()
+        typingTimer = nil
+
+        Task {
+            await PresenceService.shared.stopTyping(userId: userId, conversationId: conversation.id)
+        }
     }
 
     private func saveEditedMessage() {
