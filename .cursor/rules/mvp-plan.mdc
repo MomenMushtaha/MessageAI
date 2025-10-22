@@ -1,0 +1,65 @@
+---
+alwaysApply: true
+---
+
+# WhatsApp Clone MVP Implementation Plan
+
+## 1. Architecture & Project Setup
+- Stand up Firebase project with Firestore, Auth (email/password for speed), Cloud Functions (reserved for push payload fan-out), FCM; enable offline persistence in Firestore.
+- Register iOS bundle ID, download GoogleService-Info.plist, configure APNs key + FCM APNs auth key for foreground pushes.
+- Initialize SwiftUI iOS app targeting iOS 17; integrate Firebase SDKs via SPM (Auth, Firestore, FirestoreSwift, Messaging); add SwiftData model layer for local persistence.
+- Establish environment config (plist-driven) for API keys, endpoints, feature flags; scaffold dependency injection container for services (AuthService, ChatService, PresenceService, PushService).
+
+## 2. Domain Modeling
+- Define Firestore collections: users (profile, presence metadata), conversations (type: direct/group, participant IDs, lastMessage, timestamps), subcollection messages (senderId, body, attachments, status, readBy, createdAt, updatedAt, clientMessageId), conversationParticipants (userId, role, joinedAt, lastReadMessageId).
+- Model local SwiftData entities mirroring remote objects with sync state flags (needsUpload, pendingStatus); include indices for chronological queries.
+
+## 3. Authentication & Profile Onboarding
+- Implement AuthService with email/password signup and login, re-auth flows, and token refresh; create user profile document post-auth (display name, avatar placeholder).
+- Build onboarding screens: login, signup, profile completion; persist auth state via Firebase Auth listener and propagate to app state.
+
+## 4. Realtime Messaging Pipeline
+- ChatService sends messages by generating optimistic local record (status sending, timestamp Date()), writing to SwiftData, then Firestore (addDocument to messages with client-generated ID for idempotency); handle success by updating status to sent, storing Firestore server timestamp; on failure mark error and schedule retry.
+- Listen to Firestore messages subcollection with snapshots ordered by createdAt, sync into SwiftData; deduplicate using clientMessageId; maintain pending queue for offline mode (Firestore handles but add local retry guard).
+- Support attachment stub (image URL placeholder) for extensibility though actual upload can defer beyond MVP.
+
+## 5. Offline & Persistence Guarantees
+- Enable Firestore offline persistence; wrap calls with reachability checks to show connection banner; implement SwiftData background sync to ensure chat history loads instantly without network.
+- On app launch, load conversations and messages from SwiftData first, then attach Firestore listeners to backfill updates.
+- Implement background task to process unsent messages when connectivity restores (monitor NWPathMonitor).
+
+## 6. Presence, Typing, Read Receipts
+- PresenceService writes heartbeat timestamp to users/{id}/presence (Firestore document) on app foreground; mark offline after timeout or background via Cloud Function scheduled job (MVP can update boolean isOnline via client on lifecycle events).
+- For read receipts: update conversationParticipants/{userId}.lastReadMessageId when user views latest message; ChatService merges into message readBy map for local display (list of IDs).
+- Typing indicators are rubric-excellent but optional for MVP; focus on presence (online/offline badge) with last seen fallback.
+
+## 7. Group & Direct Chat Flows
+- Conversation creation screen: search users, create direct (deterministic ID sorted by participants) or group with title/avatar; write conversations doc and conversationParticipants.
+- Conversation list query: Firestore listener filtered by participant membership; sort by lastMessageAt; show badges for unread counts (compare lastRead vs latest message).
+- Ensure message composer handles group context (display name under incoming bubbles); integrate @ mention UI stub (not required but keep layout ready).
+
+## 8. UI & UX Implementation
+- SwiftUI navigation: root AuthGate → ChatListView → ConversationView; use ObservableObject view models hooking into services.
+- ConversationView: lazy ScrollView or List with pagination, message bubble components (incoming/outgoing styling, timestamp footer, read receipt tick marks), message status icons (sending, sent, read).
+- Composer with text input, send button disabled when blank, optimistic append to list; show connection banner, online indicator, conversation-level presence.
+- ChatList cells show avatar, name, last message preview, timestamp, unread badge; include group avatar (composed initials) for group chats.
+
+## 9. Push Notifications (Foreground)
+- Register for APNs, request authorization; integrate Firebase Messaging to obtain FCM token and store under user profile.
+- Implement Cloud Function sendMessageNotification triggered by Firestore messages write: fetch participant tokens excluding sender, send high-priority data message for foreground display (use local notification on receipt).
+- On iOS app, implement MessagingDelegate to receive willPresent and show banner with conversation context.
+
+## 10. Lifecycle & Performance Hardening
+- Handle app foreground/background: pause/resume listeners gracefully, update presence, flush unsent queue.
+- Maintain 60 FPS by throttling listener updates (batch inserts via SwiftData), use background contexts for persistence.
+- Optimize initial load (preload conversations, limit message history to latest N with lazy back pagination).
+
+## 11. Testing & Validation
+- Manual matrix aligning with rubric scenarios: live chat between two simulators, offline send/receive, app force-quit restart, rapid-fire 20 message test, group chat with 3 test users, presence indicator verification, read receipt accuracy.
+- Instrument logging for message latency (difference between send and Firestore server timestamp) to ensure under 300ms on wifi.
+- Verify push notifications arriving in foreground for recipient while sender offline.
+
+## 12. MVP Deliverables Preparation
+- Document README quickstart (Firebase setup, environment plist steps); include testing checklist referencing MVP requirements.
+- Prepare short Loom script for demonstrating scenarios (even before final deliverables).
+- Leave hooks for AI features: ensure messages stored with metadata (language, summary placeholders) so later AI pipelines can append.

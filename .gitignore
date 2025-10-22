@@ -1,0 +1,62 @@
+# Xcode
+.DS_Store
+*.xcuserstate
+*.xcworkspace/xcuserdata
+*.xcodeproj/xcuserdata
+*.xcodeproj/project.xcworkspace/xcuserdata
+xcuserdata/
+build/
+DerivedData/
+*.moved-aside
+*.pbxuser
+*.mode1v3
+*.mode2v3
+*.perspectivev3
+*.xccheckout
+*.xcscmblueprint
+*.hmap
+*.ipa
+*.xcarchive
+
+# CocoaPods
+Pods/
+*.podspec
+
+# Carthage
+Carthage/Build
+Carthage/Checkouts
+
+# Swift Package Manager
+.build/
+Packages/
+Package.pins
+Package.resolved
+
+# Fastlane
+fastlane/report.xml
+fastlane/Preview.html
+fastlane/screenshots
+fastlane/test_output
+
+# iOS Specific
+*.dSYM.zip
+*.dSYM
+
+# macOS Specific
+.DocumentRevisions-V100
+.fseventsd
+.Spotlight-V100
+.TemporaryItems
+.Trashes
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
+.AppleDB
+.AppleDesktop
+Network Trash Folder
+Temporary Items
+.apdisk
+
+# Sensitive data
+Config.plist
+secrets.plist
+ApiKeys.plist

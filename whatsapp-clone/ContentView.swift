@@ -1,0 +1,179 @@
+//
+//  ContentView.swift
+//  whatsapp-clone
+//
+//  Created by Momen Mush on 2025-10-21.
+//
+
+import SwiftUI
+import SwiftData
+import Foundation
+
+struct ContentView: View {
+    @Environment(\.modelContext) private var modelContext
+    @Query(sort: \Message.timestamp) private var messages: [Message]
+    @State private var newMessageText = ""
+    @State private var aiService = AIService()
+    @State private var isAITyping = false
+    @State private var showSettings = false
+    
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 0) {
+                // AI Status Header
+                if !aiService.isModelAvailable {
+                    VStack {
+                        Text(aiService.modelStatusMessage)
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .padding(.vertical, 8)
+                            .padding(.horizontal)
+                        Divider()
+                    }
+                    .background(Color(.systemGray6))
+                }
+                
+                // Messages List
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        LazyVStack(spacing: 8) {
+                            ForEach(messages) { message in
+                                MessageBubbleView(message: message)
+                                    .id(message.id)
+                            }
+                        }
+                        .padding(.top)
+                    }
+                    .onChange(of: messages.count) {
+                        withAnimation(.easeInOut(duration: 0.3)) {
+                            proxy.scrollTo(messages.last?.id, anchor: .bottom)
+                        }
+                    }
+                    .onAppear {
+                        if let lastMessage = messages.last {
+                            proxy.scrollTo(lastMessage.id, anchor: .bottom)
+                        }
+                    }
+                }
+                
+                Divider()
+                
+                // Message Input
+                HStack(spacing: 12) {
+                    TextField("Type a message...", text: $newMessageText, axis: .vertical)
+                        .textFieldStyle(RoundedBorderTextFieldStyle())
+                        .lineLimit(1...4)
+                    
+                    Button(action: sendMessage) {
+                        Image(systemName: "arrow.up.circle.fill")
+                            .font(.title2)
+                            .foregroundColor(newMessageText.isEmpty ? .secondary : .blue)
+                    }
+                    .disabled(newMessageText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isAITyping)
+                }
+                .padding()
+                .background(Color(.systemBackground))
+            }
+            .navigationTitle("AI Assistant")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Menu {
+                        Button("Settings", systemImage: "gear") {
+                            showSettings = true
+                        }
+                        Button("Clear Chat", systemImage: "trash", action: clearChat)
+                        Button("AI Status", systemImage: "info.circle") {
+                            // Show AI status
+                        }
+                    } label: {
+                        Image(systemName: "ellipsis.circle")
+                    }
+                }
+            }
+            .sheet(isPresented: $showSettings) {
+                SettingsView()
+            }
+        }
+    }
+    
+    private func sendMessage() {
+        let messageText = newMessageText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !messageText.isEmpty && !isAITyping else { return }
+        
+        // Add user message
+        let userMessage = Message(content: messageText, isFromUser: true)
+        modelContext.insert(userMessage)
+        
+        // Clear input
+        newMessageText = ""
+        
+        // Generate AI response if model is available
+        if aiService.isModelAvailable {
+            Task {
+                await generateAIResponse(to: messageText)
+            }
+        } else {
+            // Add a fallback message when AI is not available
+            let fallbackMessage = Message(content: "Sorry, AI assistant is not available right now. Please check your Apple Intelligence settings.", isFromUser: false)
+            modelContext.insert(fallbackMessage)
+        }
+        
+        // Save context
+        try? modelContext.save()
+    }
+    
+    private func generateAIResponse(to userMessage: String) async {
+        await MainActor.run {
+            isAITyping = true
+        }
+        
+        // Create a temporary AI message for typing indicator
+        let aiMessage = Message(content: "", isFromUser: false)
+        aiMessage.isAIGenerating = true
+        
+        await MainActor.run {
+            modelContext.insert(aiMessage)
+            try? modelContext.save()
+        }
+        
+        do {
+            // Use streaming response for better UX
+            for try await partialContent in aiService.generateStreamingResponse(to: userMessage) {
+                await MainActor.run {
+                    aiMessage.content = partialContent
+                    aiMessage.isAIGenerating = partialContent.isEmpty
+                }
+            }
+            
+            await MainActor.run {
+                aiMessage.isAIGenerating = false
+                try? modelContext.save()
+                isAITyping = false
+            }
+            
+        } catch {
+            await MainActor.run {
+                // Update the AI message with error
+                aiMessage.content = "Sorry, I encountered an error while processing your message. Please try again."
+                aiMessage.isAIGenerating = false
+                try? modelContext.save()
+                isAITyping = false
+            }
+        }
+    }
+    
+    private func clearChat() {
+        withAnimation {
+            for message in messages {
+                modelContext.delete(message)
+            }
+            try? modelContext.save()
+        }
+    }
+}
+
+#Preview {
+    ContentView()
+        .modelContainer(for: Message.self, inMemory: true)
+}
