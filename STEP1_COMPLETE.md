@@ -37,7 +37,7 @@
   - Chat list access when authenticated
   - Logout functionality
 
-- **`whatsapp_cloneApp.swift`** - Fixed Firebase deprecation warnings
+- **`MessageAIApp.swift`** - Fixed Firebase deprecation warnings
 
 ## 🎯 Features Working
 
@@ -115,7 +115,7 @@ LoginView
 
 ### Folder Structure
 ```
-whatsapp-clone/
+MessageAI/
 ├── Models/
 │   ├── User.swift
 │   └── Conversation.swift
@@ -179,4 +179,6 @@ whatsapp-clone/
 
 **Status:** ✅ **COMPLETE AND VERIFIED**  
 **Ready for:** Step 2 - Firebase Authentication
+
+
 

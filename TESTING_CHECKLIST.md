@@ -305,3 +305,5 @@ An MVP is considered stable when:
 #### Overall Assessment:
 [Ready for production / Needs fixes / Major issues]
 
+
+

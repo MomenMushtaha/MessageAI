@@ -17,7 +17,7 @@ The following Firebase packages were added via SPM:
 
 ### 2. App Initialization
 
-Updated `whatsapp_cloneApp.swift` to include:
+Updated `MessageAIApp.swift` to include:
 
 ```swift
 import FirebaseCore
@@ -45,7 +45,7 @@ init() {
 ### 3. Project Settings
 
 - **iOS Deployment Target:** Updated from iOS 26.0 → **iOS 17.0**
-- **Bundle ID:** LAEF.whatsapp-clone
+- **Bundle ID:** LAEF.MessageAI
 - **Firebase Config File:** GoogleService-Info.plist (already added)
 
 ### 4. Build Verification
@@ -133,12 +133,12 @@ Build and run your app to test the Firebase connection:
 
 ```bash
 # Open project in Xcode
-cd /Users/momenmush/Downloads/whatsapp-clone
-open whatsapp-clone.xcodeproj
+cd /Users/momenmush/Downloads/MessageAI
+open MessageAI.xcodeproj
 
 # Or build from command line
-xcodebuild -project whatsapp-clone.xcodeproj \
-  -scheme whatsapp-clone \
+xcodebuild -project MessageAI.xcodeproj \
+  -scheme MessageAI \
   -destination 'platform=iOS Simulator,name=iPhone 17' \
   build
 ```
@@ -205,4 +205,6 @@ This configuration completes **Step 1** of the MVP Implementation Plan:
 **Firebase SDK Version:** 11.15.0  
 **iOS Deployment Target:** 17.0  
 **Xcode Version:** 16.0+
+
+
 

@@ -1,6 +1,6 @@
-# MessageAI WhatsApp Clone
+# MessageAI
 
-A feature-complete, production-ready WhatsApp clone built with SwiftUI and Firebase. This project demonstrates modern iOS development best practices, real-time messaging, and offline-first architecture.
+A feature-complete, production-ready messaging app built with SwiftUI and Firebase. This project demonstrates modern iOS development best practices, real-time messaging, and offline-first architecture.
 
 ## 🎉 MVP Status: **COMPLETED** ✅
 
@@ -68,7 +68,7 @@ Before running the app, you need to configure Firebase:
 1. **Create a Firebase Project**
    - Go to [Firebase Console](https://console.firebase.google.com/)
    - Create a new project or use an existing one
-   - Register your iOS app with bundle ID: `LAEF.whatsapp-clone`
+   - Register your iOS app with bundle ID: `LAEF.MessageAI`
 
 2. **Download GoogleService-Info.plist**
    - In Firebase Console, download the `GoogleService-Info.plist` file
@@ -88,13 +88,13 @@ Before running the app, you need to configure Firebase:
 
 1. Clone the repository
 ```bash
-git clone https://github.com/your-username/whatsapp-clone.git
+git clone https://github.com/your-username/MessageAI.git
 ```
 
 2. Open the project in Xcode
 ```bash
-cd whatsapp-clone
-open whatsapp-clone.xcodeproj
+cd MessageAI
+open MessageAI.xcodeproj
 ```
 
 3. Wait for Swift Package Manager to resolve dependencies (Firebase SDK will be downloaded automatically)
@@ -140,8 +140,8 @@ See `MVP_STEPS.md` for detailed implementation notes and `TESTING_CHECKLIST.md` 
 ## 📁 Project Structure
 
 ```
-whatsapp-clone/
-├── whatsapp_cloneApp.swift         # Main app entry point with Firebase setup
+MessageAI/
+├── MessageAIApp.swift              # Main app entry point with Firebase setup
 ├── MainAppView.swift               # Root view with auth state management
 ├── Models/
 │   ├── User.swift                  # User model with presence
