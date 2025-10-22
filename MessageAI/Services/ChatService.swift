@@ -1012,8 +1012,9 @@ struct Message: Identifiable, Codable, Hashable {
     var deletedForEveryone: Bool? // Flag indicating message was deleted for everyone
     var editedAt: Date? // Timestamp when message was last edited
     var editHistory: [String]? // Array of previous message text versions (optional)
+    var reactions: [String: [String]]? // Dictionary of emoji -> array of user IDs who reacted
 
-    init(id: String, conversationId: String, senderId: String, text: String, createdAt: Date, status: String = "sent", deliveredTo: [String] = [], readBy: [String] = [], deletedBy: [String]? = nil, deletedForEveryone: Bool? = nil, editedAt: Date? = nil, editHistory: [String]? = nil) {
+    init(id: String, conversationId: String, senderId: String, text: String, createdAt: Date, status: String = "sent", deliveredTo: [String] = [], readBy: [String] = [], deletedBy: [String]? = nil, deletedForEveryone: Bool? = nil, editedAt: Date? = nil, editHistory: [String]? = nil, reactions: [String: [String]]? = nil) {
         self.id = id
         self.conversationId = conversationId
         self.senderId = senderId
@@ -1026,6 +1027,7 @@ struct Message: Identifiable, Codable, Hashable {
         self.deletedForEveryone = deletedForEveryone
         self.editedAt = editedAt
         self.editHistory = editHistory
+        self.reactions = reactions
     }
     
     // Helper to determine overall status for UI display
