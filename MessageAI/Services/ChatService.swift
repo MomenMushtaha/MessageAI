@@ -823,6 +823,21 @@ class ChatService: ObservableObject {
         }
     }
 
+    // MARK: - Message Editing
+
+    /// Edit a message's text content
+    /// - Parameters:
+    ///   - messageId: The ID of the message to edit
+    ///   - conversationId: The conversation containing the message
+    ///   - newText: The new text content for the message
+    func editMessage(messageId: String, conversationId: String, newText: String) async throws {
+        // TODO: Implement in next step
+        print("⚠️ editMessage called - not yet implemented")
+        print("   messageId: \(messageId)")
+        print("   conversationId: \(conversationId)")
+        print("   newText: \(newText)")
+    }
+
     // MARK: - Sync Pending Messages
     
     func syncPendingMessages() async {
