@@ -19,6 +19,7 @@ struct ChatListView: View {
     @State private var isLoadingUsers = false
     @State private var showDeleteError = false
     @State private var deleteErrorMessage = ""
+    @State private var showPerformanceMonitor = false
     
     var body: some View {
         NavigationStack {
@@ -86,12 +87,17 @@ struct ChatListView: View {
             .navigationBarTitleDisplayMode(.large)
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
-                    Button(action: { showLogoutConfirmation = true }) {
-                        HStack(spacing: 4) {
-                            Image(systemName: "rectangle.portrait.and.arrow.right")
-                            Text("Logout")
+                    Menu {
+                        Button(action: { showLogoutConfirmation = true }) {
+                            Label("Logout", systemImage: "rectangle.portrait.and.arrow.right")
                         }
-                        .foregroundStyle(.red)
+                        
+                        Button(action: { showPerformanceMonitor = true }) {
+                            Label("Performance Monitor", systemImage: "chart.xyaxis.line")
+                        }
+                    } label: {
+                        Image(systemName: "line.3.horizontal")
+                            .font(.title3)
                     }
                 }
                 
@@ -123,6 +129,9 @@ struct ChatListView: View {
                 })
                 .environmentObject(authService)
                 .environmentObject(chatService)
+            }
+            .sheet(isPresented: $showPerformanceMonitor) {
+                PerformanceMonitorView()
             }
             .navigationDestination(item: $selectedConversationId) { conversationId in
                 if let conversation = chatService.conversations.first(where: { $0.id == conversationId }) {

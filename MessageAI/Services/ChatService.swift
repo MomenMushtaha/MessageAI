@@ -21,6 +21,11 @@ class ChatService: ObservableObject {
     private var conversationUpdateTask: Task<Void, Never>?
     private var messageUpdateTasks: [String: Task<Void, Never>] = [:]
     
+    // Performance optimizations
+    private let messageProcessingQueue = DispatchQueue(label: "com.messageai.messageProcessing", qos: .userInitiated)
+    private var messageCache: [String: [Message]] = [:] // In-memory cache for fast lookups
+    private var lastMessageCount: [String: Int] = [:] // Track message counts to avoid redundant updates
+    
     static let shared = ChatService()
     
     private init() {}
@@ -139,6 +144,8 @@ class ChatService: ObservableObject {
                 let localMessages = try LocalStorageService.shared.getMessages(for: conversationId)
                 if !localMessages.isEmpty {
                     self.messages[conversationId] = localMessages
+                    self.messageCache[conversationId] = localMessages
+                    self.lastMessageCount[conversationId] = localMessages.count
                     print("💾 Loaded \(localMessages.count) messages from local storage")
                 }
             } catch {
@@ -165,18 +172,12 @@ class ChatService: ObservableObject {
                     return
                 }
                 
-                Task { @MainActor [weak self] in
-                    guard let self = self else { return }
-                    
-                    // Cancel any pending update task for this conversation
-                    self.messageUpdateTasks[conversationId]?.cancel()
-                    
-                    // Add small delay to debounce rapid updates
-                    try? await Task.sleep(nanoseconds: 50_000_000) // 50ms
-                    
+                // Process messages off main thread for better performance
+                Task.detached(priority: .userInitiated) {
+                    // Parse Firestore documents (expensive work off main thread)
                     let firestoreMessages = documents.compactMap { doc -> Message? in
                         let data = doc.data()
-                        
+
                         return Message(
                             id: doc.documentID,
                             conversationId: conversationId,
@@ -185,7 +186,9 @@ class ChatService: ObservableObject {
                             createdAt: (data["createdAt"] as? Timestamp)?.dateValue() ?? Date(),
                             status: data["status"] as? String ?? "sent",
                             deliveredTo: data["deliveredTo"] as? [String] ?? [],
-                            readBy: data["readBy"] as? [String] ?? []
+                            readBy: data["readBy"] as? [String] ?? [],
+                            deletedBy: data["deletedBy"] as? [String],
+                            deletedForEveryone: data["deletedForEveryone"] as? Bool
                         )
                     }
                     
@@ -196,33 +199,71 @@ class ChatService: ObservableObject {
                         }
                     }
                     
-                    // Merge with local messages (prefer Firestore if synced, keep local if pending)
-                    let localMessages = self.messages[conversationId] ?? []
-                    let pendingMessages = localMessages.filter { $0.status == "sending" || $0.status == "error" }
-                    
-                    // Combine: Firestore messages + pending local messages
-                    var mergedMessages = firestoreMessages
-                    for pendingMsg in pendingMessages {
-                        if !mergedMessages.contains(where: { $0.id == pendingMsg.id }) {
-                            mergedMessages.append(pendingMsg)
+                    // Switch to main actor for UI updates
+                    await MainActor.run { [weak self] in
+                        guard let self = self else { return }
+                        
+                        // Cancel any pending update task for this conversation
+                        self.messageUpdateTasks[conversationId]?.cancel()
+                        
+                        // Create new task for debounced update
+                        let updateTask = Task { @MainActor in
+                            // Add small delay to debounce rapid updates
+                            try? await Task.sleep(nanoseconds: 100_000_000) // 100ms (increased from 50ms for better batching)
+                            
+                            guard !Task.isCancelled else { return }
+                            
+                            // Merge with local messages (prefer Firestore if synced, keep local if pending)
+                            let localMessages = self.messages[conversationId] ?? []
+                            let pendingMessages = localMessages.filter { $0.status == "sending" || $0.status == "error" }
+                            
+                            // Combine: Firestore messages + pending local messages
+                            var mergedMessages = firestoreMessages
+                            for pendingMsg in pendingMessages {
+                                if !mergedMessages.contains(where: { $0.id == pendingMsg.id }) {
+                                    mergedMessages.append(pendingMsg)
+                                }
+                            }
+                            
+                            // Sort by date (efficient since likely already sorted)
+                            mergedMessages.sort { $0.createdAt < $1.createdAt }
+                            
+                            // Check if we need to update (avoid redundant UI updates)
+                            let currentCount = self.lastMessageCount[conversationId] ?? 0
+                            let newCount = mergedMessages.count
+                            let hasNewMessages = newCount != currentCount
+                            
+                            if hasNewMessages {
+                                // Detect new messages for notifications
+                                let previousMessages = self.messages[conversationId] ?? []
+                                let newMessages = mergedMessages.filter { newMsg in
+                                    !previousMessages.contains(where: { $0.id == newMsg.id })
+                                }
+                                
+                                self.messages[conversationId] = mergedMessages
+                                self.messageCache[conversationId] = mergedMessages
+                                self.lastMessageCount[conversationId] = newCount
+                                print("✅ Merged \(mergedMessages.count) messages (Firestore + local)")
+                                
+                                // Show notifications for new incoming messages
+                                if !newMessages.isEmpty {
+                                    self.showNotificationsForNewMessages(newMessages, conversationId: conversationId)
+                                }
+                            } else {
+                                // Even if count is same, check if status changed (e.g., delivered, read)
+                                let statusChanged = zip(self.messages[conversationId] ?? [], mergedMessages).contains { old, new in
+                                    old.id == new.id && (old.status != new.status || old.deliveredTo != new.deliveredTo || old.readBy != new.readBy)
+                                }
+                                
+                                if statusChanged {
+                                    self.messages[conversationId] = mergedMessages
+                                    self.messageCache[conversationId] = mergedMessages
+                                    print("✅ Updated message statuses")
+                                }
+                            }
                         }
-                    }
-                    
-                    // Sort by date
-                    mergedMessages.sort { $0.createdAt < $1.createdAt }
-                    
-                    // Detect new messages for notifications
-                    let previousMessages = self.messages[conversationId] ?? []
-                    let newMessages = mergedMessages.filter { newMsg in
-                        !previousMessages.contains(where: { $0.id == newMsg.id })
-                    }
-                    
-                    self.messages[conversationId] = mergedMessages
-                    print("✅ Merged \(mergedMessages.count) messages (Firestore + local)")
-                    
-                    // Show notifications for new incoming messages
-                    if !newMessages.isEmpty {
-                        self.showNotificationsForNewMessages(newMessages, conversationId: conversationId)
+                        
+                        self.messageUpdateTasks[conversationId] = updateTask
                     }
                 }
             }
@@ -380,10 +421,15 @@ class ChatService: ObservableObject {
             throw ChatError.messageTooLong
         }
         
+        let startTime = Date()
         print("📤 Sending message to conversation: \(conversationId)")
         
         // Generate message ID upfront
         let messageId = UUID().uuidString
+        let createdAt = Date()
+        
+        // Start performance tracking
+        await PerformanceMonitor.shared.startMessageSend(messageId: messageId)
         
         // Create local message immediately (optimistic UI)
         let localMessage = Message(
@@ -391,23 +437,23 @@ class ChatService: ObservableObject {
             conversationId: conversationId,
             senderId: senderId,
             text: trimmedText,
-            createdAt: Date(),
+            createdAt: createdAt,
             status: "sending"
         )
         
-        // Save to local storage first (instant feedback)
-        do {
-            try LocalStorageService.shared.saveMessage(localMessage, status: "sending", isSynced: false)
-            
-            // Update local messages array immediately
-            var currentMessages = messages[conversationId] ?? []
-            currentMessages.append(localMessage)
-            messages[conversationId] = currentMessages
-        } catch {
-            print("⚠️ Failed to save message locally: \(error.localizedDescription)")
+        // Update UI immediately (optimistic update for instant feedback)
+        var currentMessages = messages[conversationId] ?? []
+        currentMessages.append(localMessage)
+        messages[conversationId] = currentMessages
+        messageCache[conversationId] = currentMessages
+        lastMessageCount[conversationId] = currentMessages.count
+        
+        // Save to local storage asynchronously (don't block UI)
+        Task.detached(priority: .userInitiated) {
+            try? await LocalStorageService.shared.saveMessage(localMessage, status: "sending", isSynced: false)
         }
         
-        // Then send to Firestore
+        // Prepare Firestore data
         let messageData: [String: Any] = [
             "senderId": senderId,
             "text": trimmedText,
@@ -435,29 +481,60 @@ class ChatService: ObservableObject {
         
         do {
             try await batch.commit()
-            print("✅ Message sent to Firestore")
+            let duration = Date().timeIntervalSince(startTime)
+            print("✅ Message sent to Firestore in \(Int(duration * 1000))ms")
             
-            // Update local status to "sent" and mark as synced
-            try? LocalStorageService.shared.updateMessageStatus(messageId, status: "sent", isSynced: true)
+            // Complete performance tracking (success)
+            await PerformanceMonitor.shared.completeMessageSend(messageId: messageId, success: true)
+            
+            // Update local status to "sent" and mark as synced (background task)
+            Task.detached(priority: .background) {
+                try? await LocalStorageService.shared.updateMessageStatus(messageId, status: "sent", isSynced: true)
+            }
+            
+            // Update message status in UI immediately
+            await MainActor.run {
+                if var currentMessages = self.messages[conversationId],
+                   let index = currentMessages.firstIndex(where: { $0.id == messageId }) {
+                    currentMessages[index] = Message(
+                        id: messageId,
+                        conversationId: conversationId,
+                        senderId: senderId,
+                        text: trimmedText,
+                        createdAt: createdAt,
+                        status: "sent"
+                    )
+                    self.messages[conversationId] = currentMessages
+                    self.messageCache[conversationId] = currentMessages
+                }
+            }
             
         } catch {
             print("❌ Error sending message to Firestore: \(error.localizedDescription)")
             
-            // Update local status to "error"
-            try? LocalStorageService.shared.updateMessageStatus(messageId, status: "error", isSynced: false)
+            // Complete performance tracking (failure)
+            await PerformanceMonitor.shared.completeMessageSend(messageId: messageId, success: false)
             
-            // Update UI
-            if var currentMessages = messages[conversationId],
-               let index = currentMessages.firstIndex(where: { $0.id == messageId }) {
-                currentMessages[index] = Message(
-                    id: messageId,
-                    conversationId: conversationId,
-                    senderId: senderId,
-                    text: trimmedText,
-                    createdAt: localMessage.createdAt,
-                    status: "error"
-                )
-                messages[conversationId] = currentMessages
+            // Update local status to "error" (background task)
+            Task.detached(priority: .background) {
+                try? await LocalStorageService.shared.updateMessageStatus(messageId, status: "error", isSynced: false)
+            }
+            
+            // Update UI to show error
+            await MainActor.run {
+                if var currentMessages = self.messages[conversationId],
+                   let index = currentMessages.firstIndex(where: { $0.id == messageId }) {
+                    currentMessages[index] = Message(
+                        id: messageId,
+                        conversationId: conversationId,
+                        senderId: senderId,
+                        text: trimmedText,
+                        createdAt: createdAt,
+                        status: "error"
+                    )
+                    self.messages[conversationId] = currentMessages
+                    self.messageCache[conversationId] = currentMessages
+                }
             }
             
             throw error
@@ -660,7 +737,90 @@ class ChatService: ObservableObject {
         
         return user
     }
-    
+
+    // MARK: - Message Deletion
+
+    /// Delete a message for the current user or for everyone
+    /// - Parameters:
+    ///   - messageId: The ID of the message to delete
+    ///   - conversationId: The conversation containing the message
+    ///   - deleteForEveryone: If true, delete for all users (sender only)
+    func deleteMessage(messageId: String, conversationId: String, deleteForEveryone: Bool) async throws {
+        guard let currentUserId = AuthService.shared.currentUser?.id else {
+            throw NSError(domain: "ChatService", code: 401, userInfo: [NSLocalizedDescriptionKey: "User not authenticated"])
+        }
+
+        // Find the message in local cache for optimistic update
+        guard var conversationMessages = messages[conversationId],
+              let messageIndex = conversationMessages.firstIndex(where: { $0.id == messageId }) else {
+            throw NSError(domain: "ChatService", code: 404, userInfo: [NSLocalizedDescriptionKey: "Message not found"])
+        }
+
+        // Store original message for rollback
+        let originalMessage = conversationMessages[messageIndex]
+
+        // OPTIMISTIC UPDATE: Modify local state immediately
+        var updatedMessage = originalMessage
+
+        if deleteForEveryone {
+            // Verify user is the sender (permission check)
+            guard originalMessage.senderId == currentUserId else {
+                throw NSError(domain: "ChatService", code: 403, userInfo: [NSLocalizedDescriptionKey: "Only the sender can delete for everyone"])
+            }
+
+            updatedMessage.text = "[Message deleted]"
+            updatedMessage.deletedForEveryone = true
+        }
+
+        updatedMessage.deletedBy = (updatedMessage.deletedBy ?? []) + [currentUserId]
+        conversationMessages[messageIndex] = updatedMessage
+        messages[conversationId] = conversationMessages
+
+        print("🔄 Optimistically updated message \(messageId)")
+
+        // Now update Firestore in background
+        let messageRef = db.collection("conversations")
+            .document(conversationId)
+            .collection("messages")
+            .document(messageId)
+
+        do {
+            if deleteForEveryone {
+                print("🗑️ Deleting message \(messageId) for everyone")
+
+                try await messageRef.updateData([
+                    "text": "[Message deleted]",
+                    "deletedForEveryone": true,
+                    "deletedBy": FieldValue.arrayUnion([currentUserId])
+                ])
+
+                print("✅ Message deleted for everyone - confirmed by server")
+            } else {
+                print("🗑️ Marking message \(messageId) as deleted for user \(currentUserId)")
+
+                try await messageRef.updateData([
+                    "deletedBy": FieldValue.arrayUnion([currentUserId])
+                ])
+
+                print("✅ Message marked as deleted for current user - confirmed by server")
+            }
+
+        } catch {
+            // ROLLBACK: Restore original message on failure
+            print("❌ Deletion failed, rolling back to original state")
+
+            guard var messages = messages[conversationId],
+                  let index = messages.firstIndex(where: { $0.id == messageId }) else {
+                throw error
+            }
+
+            messages[index] = originalMessage
+            self.messages[conversationId] = messages
+
+            throw error
+        }
+    }
+
     // MARK: - Sync Pending Messages
     
     func syncPendingMessages() async {
@@ -736,13 +896,15 @@ struct Message: Identifiable, Codable, Hashable {
     let id: String
     let conversationId: String
     let senderId: String
-    let text: String
+    var text: String // mutable for "delete for everyone"
     let createdAt: Date
     var status: String // sending, sent, delivered, read
     var deliveredTo: [String] // Array of user IDs who have received the message
     var readBy: [String] // Array of user IDs who have read the message
-    
-    init(id: String, conversationId: String, senderId: String, text: String, createdAt: Date, status: String = "sent", deliveredTo: [String] = [], readBy: [String] = []) {
+    var deletedBy: [String]? // Array of user IDs who have deleted this message
+    var deletedForEveryone: Bool? // Flag indicating message was deleted for everyone
+
+    init(id: String, conversationId: String, senderId: String, text: String, createdAt: Date, status: String = "sent", deliveredTo: [String] = [], readBy: [String] = [], deletedBy: [String]? = nil, deletedForEveryone: Bool? = nil) {
         self.id = id
         self.conversationId = conversationId
         self.senderId = senderId
@@ -751,6 +913,8 @@ struct Message: Identifiable, Codable, Hashable {
         self.status = status
         self.deliveredTo = deliveredTo
         self.readBy = readBy
+        self.deletedBy = deletedBy
+        self.deletedForEveryone = deletedForEveryone
     }
     
     // Helper to determine overall status for UI display
@@ -784,6 +948,20 @@ struct Message: Identifiable, Codable, Hashable {
         
         // Otherwise just sent
         return "sent"
+    }
+}
+
+// MARK: - Message Deletion Helpers
+
+extension Message {
+    /// Check if this message is deleted for a specific user
+    func isDeleted(for userId: String) -> Bool {
+        return deletedBy?.contains(userId) ?? false
+    }
+
+    /// Check if message is deleted for everyone
+    var isDeletedForEveryone: Bool {
+        return deletedForEveryone == true
     }
 }
 

@@ -24,6 +24,11 @@ struct ConversationDetailView: View {
     @State private var showErrorAlert = false
     @State private var errorMessage = ""
     @State private var showClearHistoryAlert = false
+    @State private var scrollProxy: ScrollViewProxy?
+    @State private var shouldAutoScroll = true
+    @State private var messageStatusCache: [String: String] = [:] // messageId -> status for performance
+    @State private var selectedMessage: Message? // For message actions
+    @State private var showMessageActions = false // Show action sheet
     @Environment(\.dismiss) private var dismiss
     
     var body: some View {
@@ -42,39 +47,64 @@ struct ConversationDetailView: View {
                                         isFromCurrentUser: message.senderId == authService.currentUser?.id,
                                         senderName: participantUsers[message.senderId]?.displayName,
                                         conversation: conversation,
-                                        currentUserId: authService.currentUser?.id ?? ""
+                                        currentUserId: authService.currentUser?.id ?? "",
+                                        statusCache: $messageStatusCache
                                     )
                                     .id(message.id)
+                                    .onAppear {
+                                        // Precompute and cache status for smooth scrolling
+                                        if messageStatusCache[message.id] == nil {
+                                            messageStatusCache[message.id] = message.displayStatus(
+                                                for: conversation,
+                                                currentUserId: authService.currentUser?.id ?? ""
+                                            )
+                                        }
+                                    }
+                                    .onLongPressGesture {
+                                        // Show message actions sheet
+                                        selectedMessage = message
+                                        showMessageActions = true
+
+                                        // Haptic feedback
+                                        let generator = UIImpactFeedbackGenerator(style: .medium)
+                                        generator.impactOccurred()
+                                    }
                                 }
                             }
                         }
                         .padding()
+                        .background(GeometryReader { geometry in
+                            Color.clear.preference(
+                                key: ScrollOffsetPreferenceKey.self,
+                                value: geometry.frame(in: .named("scroll")).minY
+                            )
+                        })
                     }
+                    .coordinateSpace(name: "scroll")
                     .scrollDismissesKeyboard(.interactively)
+                    .onPreferenceChange(ScrollOffsetPreferenceKey.self) { offset in
+                        // Show scroll-to-bottom button when scrolled up
+                        let threshold: CGFloat = -100
+                        showScrollToBottom = offset < threshold
+                    }
                     .onChange(of: currentMessages.count) { oldValue, newValue in
-                        if newValue > oldValue, let lastMessage = currentMessages.last {
-                            withAnimation(.easeInOut(duration: 0.2)) {
-                                proxy.scrollTo(lastMessage.id, anchor: .bottom)
-                            }
+                        // Only auto-scroll if user is at bottom or it's their own message
+                        if shouldAutoScroll, newValue > oldValue {
+                            scrollToBottomAnimated(proxy: proxy)
                         }
                     }
                     .onAppear {
-                        if let lastMessage = currentMessages.last {
-                            Task { @MainActor in
-                                try? await Task.sleep(nanoseconds: 100_000_000) // 0.1s
-                                proxy.scrollTo(lastMessage.id, anchor: .bottom)
-                            }
-                        }
+                        scrollProxy = proxy
+                        scrollToBottom(proxy: proxy, animated: false)
                     }
                 }
                 
                 // Scroll to Bottom Button
                 if showScrollToBottom {
                     Button(action: {
-                        withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
-                            if let lastMessage = currentMessages.last {
-                                // Use ScrollViewReader's proxy - need to pass it
-                            }
+                        if let proxy = scrollProxy {
+                            scrollToBottomAnimated(proxy: proxy)
+                            shouldAutoScroll = true
                         }
                     }) {
                         Image(systemName: "arrow.down.circle.fill")
@@ -143,6 +173,35 @@ struct ConversationDetailView: View {
                 participantIds: conversation.participantIds,
                 participantUsers: participantUsers
             )
+        }
+        .sheet(isPresented: $showMessageActions) {
+            if let message = selectedMessage,
+               let userId = authService.currentUser?.id {
+                MessageActionsSheet(
+                    message: message,
+                    currentUserId: userId,
+                    onDelete: { deleteForEveryone in
+                        Task {
+                            do {
+                                try await chatService.deleteMessage(
+                                    messageId: message.id,
+                                    conversationId: conversation.id,
+                                    deleteForEveryone: deleteForEveryone
+                                )
+                                print("✅ Message deleted successfully")
+                            } catch {
+                                print("❌ Failed to delete message: \(error.localizedDescription)")
+                                errorMessage = error.localizedDescription
+                                showErrorAlert = true
+                            }
+                        }
+                        showMessageActions = false
+                    },
+                    onDismiss: {
+                        showMessageActions = false
+                    }
+                )
+            }
         }
         .onAppear {
             // Load participant users first (especially important for new groups)
@@ -269,7 +328,14 @@ struct ConversationDetailView: View {
     }
     
     private var currentMessages: [Message] {
-        chatService.messages[conversation.id] ?? []
+        guard let currentUserId = authService.currentUser?.id else {
+            return chatService.messages[conversation.id] ?? []
+        }
+
+        // Filter out messages deleted by current user
+        return (chatService.messages[conversation.id] ?? []).filter { message in
+            !message.isDeleted(for: currentUserId)
+        }
     }
     
     private var displayTitle: String {
@@ -388,12 +454,20 @@ struct ConversationDetailView: View {
         messageText = ""
         isSending = true
         
+        // Ensure auto-scroll for user's own messages
+        shouldAutoScroll = true
+        
         do {
             try await chatService.sendMessage(
                 conversationId: conversation.id,
                 senderId: currentUserId,
                 text: textToSend
             )
+            
+            // Scroll to bottom after sending
+            if let proxy = scrollProxy {
+                scrollToBottomAnimated(proxy: proxy)
+            }
         } catch {
             print("❌ Error sending message: \(error.localizedDescription)")
             // Show error to user
@@ -404,6 +478,24 @@ struct ConversationDetailView: View {
         }
         
         isSending = false
+    }
+    
+    // MARK: - Scroll Helpers
+    
+    private func scrollToBottom(proxy: ScrollViewProxy, animated: Bool = true) {
+        guard let lastMessage = currentMessages.last else { return }
+        
+        if animated {
+            withAnimation(.easeOut(duration: 0.3)) {
+                proxy.scrollTo(lastMessage.id, anchor: .bottom)
+            }
+        } else {
+            proxy.scrollTo(lastMessage.id, anchor: .bottom)
+        }
+    }
+    
+    private func scrollToBottomAnimated(proxy: ScrollViewProxy) {
+        scrollToBottom(proxy: proxy, animated: true)
     }
     
     private func clearChatHistory() async {
@@ -424,13 +516,15 @@ struct MessageBubbleRow: View, Equatable {
     let senderName: String?
     let conversation: Conversation
     let currentUserId: String
+    @Binding var statusCache: [String: String]
     
     // Equatable conformance for performance optimization
     static func == (lhs: MessageBubbleRow, rhs: MessageBubbleRow) -> Bool {
         lhs.message.id == rhs.message.id &&
         lhs.message.status == rhs.message.status &&
         lhs.message.text == rhs.message.text &&
-        lhs.senderName == rhs.senderName
+        lhs.senderName == rhs.senderName &&
+        lhs.statusCache[lhs.message.id] == rhs.statusCache[rhs.message.id]
     }
     
     var body: some View {
@@ -495,7 +589,9 @@ struct MessageBubbleRow: View, Equatable {
     private var bubbleBackground: some View {
         Group {
             if isFromCurrentUser {
-                if message.displayStatus(for: conversation, currentUserId: currentUserId) == "error" {
+                // Use cached status for performance
+                let displayStatus = statusCache[message.id] ?? message.displayStatus(for: conversation, currentUserId: currentUserId)
+                if displayStatus == "error" {
                     LinearGradient(
                         colors: [Color.red.opacity(0.8), Color.red.opacity(0.6)],
                         startPoint: .topLeading,
@@ -516,7 +612,8 @@ struct MessageBubbleRow: View, Equatable {
     
     @ViewBuilder
     private var statusIcon: some View {
-        let displayStatus = message.displayStatus(for: conversation, currentUserId: currentUserId)
+        // Use cached status for performance, fallback to computation if not cached
+        let displayStatus = statusCache[message.id] ?? message.displayStatus(for: conversation, currentUserId: currentUserId)
         
         switch displayStatus {
         case "sending":
@@ -623,6 +720,16 @@ struct ParticipantListView: View {
                 }
             }
         }
+    }
+}
+
+// MARK: - Scroll Offset Preference Key
+
+struct ScrollOffsetPreferenceKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+    
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = nextValue()
     }
 }
 
