@@ -21,8 +21,7 @@ struct whatsapp_cloneApp: App {
         
         // Enable Firestore offline persistence
         let settings = FirestoreSettings()
-        settings.isPersistenceEnabled = true
-        settings.cacheSizeBytes = FirestoreCacheSizeUnlimited
+        settings.cacheSettings = PersistentCacheSettings(sizeBytes: NSNumber(value: FirestoreCacheSizeUnlimited))
         Firestore.firestore().settings = settings
     }
     

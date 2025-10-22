@@ -9,27 +9,49 @@ import SwiftUI
 import SwiftData
 
 struct MainAppView: View {
-    @AppStorage("hasSeenWelcome") private var hasSeenWelcome = false
-    @State private var showWelcome = true
-    @State private var showSettings = false
+    // Mock authentication state (will be replaced with real AuthService in Step 2)
+    @State private var isAuthenticated = false
+    @State private var showSignUp = false
     
     var body: some View {
         Group {
-            if showWelcome && !hasSeenWelcome {
-                WelcomeView(showWelcome: $showWelcome)
-                    .onDisappear {
-                        hasSeenWelcome = true
+            if isAuthenticated {
+                // Show Chat List when authenticated
+                ChatListView(onLogout: {
+                    withAnimation {
+                        isAuthenticated = false
                     }
+                })
             } else {
-                ContentView()
-                    .sheet(isPresented: $showSettings) {
-                        SettingsView()
-                    }
-            }
-        }
-        .onAppear {
-            if hasSeenWelcome {
-                showWelcome = false
+                // Show Login/SignUp flow
+                if showSignUp {
+                    SignUpView(
+                        onSignUp: {
+                            withAnimation {
+                                isAuthenticated = true
+                                showSignUp = false
+                            }
+                        },
+                        onShowLogin: {
+                            withAnimation {
+                                showSignUp = false
+                            }
+                        }
+                    )
+                } else {
+                    LoginView(
+                        onLogin: {
+                            withAnimation {
+                                isAuthenticated = true
+                            }
+                        },
+                        onShowSignUp: {
+                            withAnimation {
+                                showSignUp = true
+                            }
+                        }
+                    )
+                }
             }
         }
     }
