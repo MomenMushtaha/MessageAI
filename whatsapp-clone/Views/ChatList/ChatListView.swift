@@ -8,14 +8,15 @@
 import SwiftUI
 
 struct ChatListView: View {
-    @ObservedObject var authService = AuthService.shared
-    @ObservedObject var chatService = ChatService.shared
+    @EnvironmentObject var authService: AuthService
+    @EnvironmentObject var chatService: ChatService
     @State private var searchText = ""
     @State private var showingNewChat = false
     @State private var showingNewGroup = false
     @State private var selectedConversationId: String?
     @State private var showLogoutConfirmation = false
     @State private var conversationUsers: [String: User] = [:] // userId -> User
+    @State private var isLoadingUsers = false
     
     var body: some View {
         NavigationStack {
@@ -49,25 +50,18 @@ struct ChatListView: View {
                                 ConversationRow(
                                     conversation: conversation,
                                     currentUserId: authService.currentUser?.id ?? "",
-                                    otherUser: getOtherUser(for: conversation)
+                                    otherUser: conversationUsers[getOtherUserId(for: conversation) ?? ""]
                                 )
                                 .onTapGesture {
-                                    withAnimation(.easeInOut(duration: 0.2)) {
-                                        selectedConversationId = conversation.id
-                                    }
+                                    selectedConversationId = conversation.id
                                 }
-                                .transition(.asymmetric(
-                                    insertion: .move(edge: .leading).combined(with: .opacity),
-                                    removal: .opacity
-                                ))
                                 
                                 Divider()
                                     .padding(.leading, 76)
                             }
                         }
-                        .animation(.spring(response: 0.3, dampingFraction: 0.8), value: chatService.conversations.count)
                     }
-                    .scrollDismissesKeyboard(.interactively) // Better UX
+                    .scrollDismissesKeyboard(.interactively)
                 }
             }
             .navigationTitle("Chats")
@@ -102,18 +96,51 @@ struct ChatListView: View {
                 NewChatView(onConversationCreated: { conversationId in
                     selectedConversationId = conversationId
                 })
+                .environmentObject(authService)
+                .environmentObject(chatService)
             }
             .sheet(isPresented: $showingNewGroup) {
                 NewGroupView(onConversationCreated: { conversationId in
                     selectedConversationId = conversationId
                 })
+                .environmentObject(authService)
+                .environmentObject(chatService)
             }
             .navigationDestination(item: $selectedConversationId) { conversationId in
                 if let conversation = chatService.conversations.first(where: { $0.id == conversationId }) {
+                    let otherUserId = getOtherUserId(for: conversation)
                     ConversationDetailView(
                         conversation: conversation,
-                        otherUser: getOtherUser(for: conversation)
+                        otherUser: otherUserId != nil ? conversationUsers[otherUserId!] : nil
                     )
+                    .onAppear {
+                        // Ensure users are loaded when navigating to a conversation
+                        if conversation.type == .direct, let userId = otherUserId, conversationUsers[userId] == nil {
+                            Task {
+                                if let user = try? await chatService.getUser(userId: userId) {
+                                    await MainActor.run {
+                                        conversationUsers[userId] = user
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    // Conversation not loaded yet (e.g., just created group)
+                    // Show loading state while Firestore listener catches up
+                    VStack(spacing: 16) {
+                        ProgressView()
+                            .padding()
+                        Text("Loading conversation...")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(Color(.systemBackground))
+                    .onAppear {
+                        print("⚠️ Conversation not found yet: \(conversationId)")
+                        print("📊 Available conversations: \(chatService.conversations.map { $0.id })")
+                    }
                 }
             }
             .confirmationDialog("Are you sure you want to logout?", isPresented: $showLogoutConfirmation, titleVisibility: .visible) {
@@ -124,6 +151,10 @@ struct ChatListView: View {
             }
             .onAppear {
                 startObservingConversations()
+                preloadConversationUsers()
+            }
+            .onChange(of: chatService.conversations) { _, _ in
+                preloadConversationUsers()
             }
             .onDisappear {
                 chatService.stopObservingConversations()
@@ -139,38 +170,48 @@ struct ChatListView: View {
                 if conversation.type == .group {
                     return conversation.groupName?.localizedCaseInsensitiveContains(searchText) ?? false
                 } else {
-                    let otherUser = getOtherUser(for: conversation)
-                    return otherUser?.displayName.localizedCaseInsensitiveContains(searchText) ?? false
+                    if let otherUserId = getOtherUserId(for: conversation),
+                       let otherUser = conversationUsers[otherUserId] {
+                        return otherUser.displayName.localizedCaseInsensitiveContains(searchText)
+                    }
+                    return false
                 }
             }
         }
     }
     
-    private func getOtherUser(for conversation: Conversation) -> User? {
+    private func getOtherUserId(for conversation: Conversation) -> String? {
         guard conversation.type == .direct,
               let currentUserId = authService.currentUser?.id else {
             return nil
         }
+        return conversation.participantIds.first { $0 != currentUserId }
+    }
+    
+    private func preloadConversationUsers() {
+        guard !isLoadingUsers else { return }
+        isLoadingUsers = true
         
-        let otherUserId = conversation.participantIds.first { $0 != currentUserId }
-        
-        guard let otherUserId = otherUserId else { return nil }
-        
-        // Return cached user if available
-        if let cachedUser = conversationUsers[otherUserId] {
-            return cachedUser
-        }
-        
-        // Fetch user asynchronously
         Task {
-            if let user = try? await chatService.getUser(userId: otherUserId) {
-                await MainActor.run {
-                    conversationUsers[otherUserId] = user
+            let userIds = Set(chatService.conversations
+                .filter { $0.type == .direct }
+                .flatMap { $0.participantIds }
+                .filter { $0 != authService.currentUser?.id })
+            
+            for userId in userIds {
+                if conversationUsers[userId] == nil {
+                    if let user = try? await chatService.getUser(userId: userId) {
+                        await MainActor.run {
+                            conversationUsers[userId] = user
+                        }
+                    }
                 }
             }
+            
+            await MainActor.run {
+                isLoadingUsers = false
+            }
         }
-        
-        return nil
     }
     
     private func startObservingConversations() {

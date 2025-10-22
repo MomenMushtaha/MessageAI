@@ -37,6 +37,11 @@ struct whatsapp_cloneApp: App {
     var body: some Scene {
         WindowGroup {
             MainAppView()
+                .onAppear {
+                    // Initialize LocalStorageService with the model context
+                    let context = ModelContext(modelContainer)
+                    LocalStorageService.initialize(with: context)
+                }
         }
         .modelContainer(modelContainer)
     }

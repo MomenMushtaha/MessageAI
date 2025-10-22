@@ -8,8 +8,8 @@
 import SwiftUI
 
 struct NewGroupView: View {
-    @ObservedObject var authService = AuthService.shared
-    @ObservedObject var chatService = ChatService.shared
+    @EnvironmentObject var authService: AuthService
+    @EnvironmentObject var chatService: ChatService
     @Environment(\.dismiss) private var dismiss
     
     @State private var groupName = ""
@@ -100,6 +100,8 @@ struct NewGroupView: View {
                         onConversationCreated(conversationId)
                     }
                 )
+                .environmentObject(authService)
+                .environmentObject(chatService)
             }
         }
     }
@@ -263,8 +265,8 @@ struct GroupDetailsView: View {
     let selectedUsers: [String]
     let allUsers: [User]
     
-    @ObservedObject var authService = AuthService.shared
-    @ObservedObject var chatService = ChatService.shared
+    @EnvironmentObject var authService: AuthService
+    @EnvironmentObject var chatService: ChatService
     @Environment(\.dismiss) private var dismiss
     
     @State private var groupName = ""
@@ -385,6 +387,10 @@ struct GroupDetailsView: View {
             )
             
             print("✅ Group created: \(conversationId)")
+            
+            // Wait a bit for Firestore listener to update conversations
+            try? await Task.sleep(nanoseconds: 500_000_000) // 0.5 seconds
+            
             dismiss()
             onGroupCreated(conversationId)
             

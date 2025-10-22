@@ -23,31 +23,32 @@ struct MainAppView: View {
                 if authService.isAuthenticated {
                     // Show Chat List when authenticated
                     ChatListView()
+                        .environmentObject(authService)
+                        .environmentObject(chatService)
+                        .environmentObject(networkMonitor)
                 } else {
                     // Show Login/SignUp flow
                     if showSignUp {
                         SignUpView(
                             onShowLogin: {
-                                withAnimation {
+                                withAnimation(.easeInOut(duration: 0.2)) {
                                     showSignUp = false
                                 }
                             }
                         )
-                        .transition(.move(edge: .trailing))
+                        .transition(.opacity)
                     } else {
                         LoginView(
                             onShowSignUp: {
-                                withAnimation {
+                                withAnimation(.easeInOut(duration: 0.2)) {
                                     showSignUp = true
                                 }
                             }
                         )
-                        .transition(.move(edge: .leading))
+                        .transition(.opacity)
                     }
                 }
             }
-            .animation(.easeInOut, value: authService.isAuthenticated)
-            .animation(.easeInOut, value: showSignUp)
             
             // Offline Banner
             OfflineBanner(isConnected: networkMonitor.isConnected)

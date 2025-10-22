@@ -215,26 +215,87 @@ class AuthService: ObservableObject {
         // Check if it's a Firebase Auth error
         if error.domain == "FIRAuthErrorDomain" {
             switch error.code {
+            // Account errors
             case 17007: // emailAlreadyInUse
-                return "This email is already registered"
-            case 17008: // invalidEmail
-                return "Invalid email address"
-            case 17026: // weakPassword
-                return "Password must be at least 6 characters"
-            case 17009: // wrongPassword
-                return "Incorrect password"
+                return "This email is already registered. Please log in instead."
             case 17011: // userNotFound
-                return "No account found with this email"
+                return "No account found with this email. Please sign up first."
+            case 17012: // userDisabled
+                return "This account has been disabled. Please contact support."
+            
+            // Password errors
+            case 17009: // wrongPassword
+                return "Incorrect password. Please try again."
+            case 17026: // weakPassword
+                return "Password is too weak. Please use at least 6 characters."
+            
+            // Email errors
+            case 17008: // invalidEmail
+                return "Invalid email address. Please check and try again."
+            
+            // Credential errors
+            case 17999: // invalidCredential
+                return "Incorrect email or password. Please try again."
+            case 17014: // invalidVerificationCode
+                return "Invalid verification code. Please try again."
+            case 17044: // invalidVerificationId
+                return "Invalid verification. Please try again."
+            case 17048: // credentialAlreadyInUse
+                return "This credential is already associated with another account."
+            
+            // Network errors
             case 17020: // networkError
-                return "Network error. Please check your connection"
+                return "Network error. Please check your internet connection."
+            
+            // Rate limiting
             case 17010: // tooManyRequests
-                return "Too many attempts. Please try again later"
+                return "Too many attempts. Please wait a moment and try again."
+            
+            // Session errors
+            case 17014: // requiresRecentLogin
+                return "Please log in again to continue."
+            case 17051: // userTokenExpired
+                return "Your session has expired. Please log in again."
+            
+            // Operation errors
+            case 17001: // operationNotAllowed
+                return "This operation is not allowed. Please contact support."
+            
             default:
-                return error.localizedDescription
+                // Handle generic errors with user-friendly messages
+                let message = error.localizedDescription.lowercased()
+                
+                // Check for common error phrases and replace with friendly messages
+                if message.contains("credential") && (message.contains("malformed") || message.contains("expired")) {
+                    return "Incorrect email or password. Please try again."
+                } else if message.contains("password") {
+                    return "Incorrect password. Please try again."
+                } else if message.contains("email") {
+                    return "There's an issue with this email address. Please check and try again."
+                } else if message.contains("network") || message.contains("connection") {
+                    return "Network error. Please check your internet connection."
+                } else if message.contains("timeout") {
+                    return "Request timed out. Please try again."
+                } else {
+                    return "Something went wrong. Please try again."
+                }
             }
         }
         
-        return error.localizedDescription
+        // Handle other error domains
+        if error.domain == NSURLErrorDomain {
+            switch error.code {
+            case NSURLErrorNotConnectedToInternet, NSURLErrorNetworkConnectionLost:
+                return "No internet connection. Please check your network."
+            case NSURLErrorTimedOut:
+                return "Request timed out. Please try again."
+            default:
+                return "Network error. Please check your connection."
+            }
+        }
+        
+        // Default fallback
+        return "Something went wrong. Please try again."
     }
     
     deinit {

@@ -10,20 +10,23 @@ import SwiftData
 
 @MainActor
 class LocalStorageService {
-    private let modelContext: ModelContext
+    private static var _modelContext: ModelContext?
+    
+    private var modelContext: ModelContext {
+        guard let context = Self._modelContext else {
+            fatalError("ModelContext must be set before using LocalStorageService. Call LocalStorageService.initialize(with:) in your app initialization.")
+        }
+        return context
+    }
     
     static let shared = LocalStorageService()
     
-    private init() {
-        // This will be injected from the environment
-        // For now, create a temporary context
-        let container = try! ModelContainer(for: LocalMessage.self, LocalConversation.self)
-        self.modelContext = ModelContext(container)
-    }
+    private init() {}
     
-    // Inject model context from app
-    func setModelContext(_ context: ModelContext) {
-        // Update context if needed
+    // Initialize with model context from app
+    static func initialize(with context: ModelContext) {
+        _modelContext = context
+        print("✅ LocalStorageService initialized with ModelContext")
     }
     
     // MARK: - Messages

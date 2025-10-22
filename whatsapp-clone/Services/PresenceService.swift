@@ -103,8 +103,8 @@ class PresenceService: ObservableObject {
         // Stop any existing timer
         stopHeartbeat()
         
-        // Send heartbeat every 30 seconds
-        heartbeatTimer = Timer.scheduledTimer(withTimeInterval: 30.0, repeats: true) { [weak self] _ in
+        // Send heartbeat every 60 seconds (reduced from 30 for better performance)
+        heartbeatTimer = Timer.scheduledTimer(withTimeInterval: 60.0, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 await self?.sendHeartbeat(userId: userId)
             }
@@ -115,7 +115,7 @@ class PresenceService: ObservableObject {
             RunLoop.main.add(timer, forMode: .common)
         }
         
-        print("💓 Started heartbeat timer")
+        print("💓 Started heartbeat timer (60s interval)")
     }
     
     private func stopHeartbeat() {

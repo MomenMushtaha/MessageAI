@@ -12,8 +12,8 @@ struct ConversationDetailView: View {
     let conversation: Conversation
     let otherUser: User?
     
-    @ObservedObject var authService = AuthService.shared
-    @ObservedObject var chatService = ChatService.shared
+    @EnvironmentObject var authService: AuthService
+    @EnvironmentObject var chatService: ChatService
     @State private var messageText = ""
     @State private var isSending = false
     @State private var participantUsers: [String: User] = [:] // userId -> User cache
@@ -39,31 +39,28 @@ struct ConversationDetailView: View {
                                     MessageBubbleRow(
                                         message: message,
                                         isFromCurrentUser: message.senderId == authService.currentUser?.id,
-                                        senderName: getSenderName(for: message),
+                                        senderName: participantUsers[message.senderId]?.displayName,
                                         conversation: conversation,
                                         currentUserId: authService.currentUser?.id ?? ""
                                     )
                                     .id(message.id)
-                                    .transition(.asymmetric(
-                                        insertion: .move(edge: .bottom).combined(with: .opacity),
-                                        removal: .opacity
-                                    ))
                                 }
                             }
                         }
                         .padding()
                     }
-                    .scrollDismissesKeyboard(.interactively) // Better UX
+                    .scrollDismissesKeyboard(.interactively)
                     .onChange(of: currentMessages.count) { oldValue, newValue in
                         if newValue > oldValue, let lastMessage = currentMessages.last {
-                            withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                            withAnimation(.easeInOut(duration: 0.2)) {
                                 proxy.scrollTo(lastMessage.id, anchor: .bottom)
                             }
                         }
                     }
                     .onAppear {
                         if let lastMessage = currentMessages.last {
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                            Task { @MainActor in
+                                try? await Task.sleep(nanoseconds: 100_000_000) // 0.1s
                                 proxy.scrollTo(lastMessage.id, anchor: .bottom)
                             }
                         }
@@ -134,8 +131,11 @@ struct ConversationDetailView: View {
             )
         }
         .onAppear {
-            chatService.observeMessages(conversationId: conversation.id)
+            // Load participant users first (especially important for new groups)
             loadParticipantUsers()
+            
+            // Then start observing messages
+            chatService.observeMessages(conversationId: conversation.id)
             markMessagesAsDeliveredAndRead()
             startObservingPresence()
             
@@ -160,17 +160,26 @@ struct ConversationDetailView: View {
         VStack(spacing: 16) {
             Spacer()
             
-            Image(systemName: "message.fill")
-                .font(.system(size: 48))
-                .foregroundStyle(.secondary)
-            
-            Text("No messages yet")
-                .font(.headline)
-                .foregroundStyle(.secondary)
-            
-            Text("Start a conversation!")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
+            if participantUsers.isEmpty && conversation.type == .group {
+                // Loading state for new groups
+                ProgressView()
+                    .padding()
+                Text("Loading group...")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            } else {
+                Image(systemName: conversation.type == .group ? "person.3.fill" : "message.fill")
+                    .font(.system(size: 48))
+                    .foregroundStyle(.secondary)
+                
+                Text(conversation.type == .group ? "Group created!" : "No messages yet")
+                    .font(.headline)
+                    .foregroundStyle(.secondary)
+                
+                Text("Start a conversation!")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
             
             Spacer()
         }
@@ -225,8 +234,6 @@ struct ConversationDetailView: View {
                 }
             }
                 .disabled(messageText.isEmpty || isSending)
-                .scaleEffect(messageText.isEmpty ? 0.9 : 1.0)
-                .animation(.spring(response: 0.3, dampingFraction: 0.6), value: messageText.isEmpty)
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 10)
@@ -279,44 +286,26 @@ struct ConversationDetailView: View {
         }
     }
     
-    private func getSenderName(for message: Message) -> String? {
-        guard conversation.type == .group else { return nil }
-        
-        if message.senderId == authService.currentUser?.id {
-            return "You"
-        }
-        
-        // Return cached user name if available
-        if let user = participantUsers[message.senderId] {
-            return user.displayName
-        }
-        
-        // Fetch user asynchronously if not in cache
-        if !participantUsers.keys.contains(message.senderId) {
-            Task {
-                if let user = try? await chatService.getUser(userId: message.senderId) {
-                    await MainActor.run {
-                        participantUsers[message.senderId] = user
-                    }
-                }
-            }
-        }
-        
-        return "Loading..."
-    }
-    
     private func loadParticipantUsers() {
-        guard conversation.type == .group else { return }
-        
         Task {
+            // Load all participant users upfront (important for group chats)
+            await MainActor.run {
+                print("📥 Loading \(conversation.participantIds.count) participant users...")
+            }
+            
             for participantId in conversation.participantIds {
                 if participantUsers[participantId] == nil {
                     if let user = try? await chatService.getUser(userId: participantId) {
                         await MainActor.run {
                             participantUsers[participantId] = user
+                            print("✅ Loaded user: \(user.displayName)")
                         }
                     }
                 }
+            }
+            
+            await MainActor.run {
+                print("✅ All \(participantUsers.count) participant users loaded")
             }
         }
     }
@@ -466,8 +455,6 @@ struct MessageBubbleRow: View, Equatable {
                 Spacer(minLength: 50)
             }
         }
-        .transition(.scale(scale: 0.8).combined(with: .opacity))
-        .animation(.spring(response: 0.3, dampingFraction: 0.7), value: message.id)
     }
     
     private var bubbleBackground: some View {

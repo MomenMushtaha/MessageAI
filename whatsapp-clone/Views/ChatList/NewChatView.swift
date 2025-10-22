@@ -8,8 +8,8 @@
 import SwiftUI
 
 struct NewChatView: View {
-    @ObservedObject var authService = AuthService.shared
-    @ObservedObject var chatService = ChatService.shared
+    @EnvironmentObject var authService: AuthService
+    @EnvironmentObject var chatService: ChatService
     @Environment(\.dismiss) private var dismiss
     
     @State private var searchText = ""

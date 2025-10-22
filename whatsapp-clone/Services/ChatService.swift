@@ -18,6 +18,8 @@ class ChatService: ObservableObject {
     private let db = Firestore.firestore()
     private var conversationsListener: ListenerRegistration?
     private var messageListeners: [String: ListenerRegistration] = [:]
+    private var conversationUpdateTask: Task<Void, Never>?
+    private var messageUpdateTasks: [String: Task<Void, Never>] = [:]
     
     static let shared = ChatService()
     
@@ -77,6 +79,12 @@ class ChatService: ObservableObject {
                 
                 Task { @MainActor [weak self] in
                     guard let self = self else { return }
+                    
+                    // Cancel any pending update task
+                    self.conversationUpdateTask?.cancel()
+                    
+                    // Add small delay to debounce rapid updates
+                    try? await Task.sleep(nanoseconds: 50_000_000) // 50ms
                     
                     let conversations = documents.compactMap { doc -> Conversation? in
                         let data = doc.data()
@@ -151,7 +159,15 @@ class ChatService: ObservableObject {
                     return
                 }
                 
-                Task { @MainActor in
+                Task { @MainActor [weak self] in
+                    guard let self = self else { return }
+                    
+                    // Cancel any pending update task for this conversation
+                    self.messageUpdateTasks[conversationId]?.cancel()
+                    
+                    // Add small delay to debounce rapid updates
+                    try? await Task.sleep(nanoseconds: 50_000_000) // 50ms
+                    
                     let firestoreMessages = documents.compactMap { doc -> Message? in
                         let data = doc.data()
                         
@@ -167,9 +183,11 @@ class ChatService: ObservableObject {
                         )
                     }
                     
-                    // Save to local storage
-                    for message in firestoreMessages {
-                        try? LocalStorageService.shared.saveMessage(message, status: message.status, isSynced: true)
+                    // Save to local storage in background
+                    Task.detached(priority: .background) {
+                        for message in firestoreMessages {
+                            try? await LocalStorageService.shared.saveMessage(message, status: message.status, isSynced: true)
+                        }
                     }
                     
                     // Merge with local messages (prefer Firestore if synced, keep local if pending)
