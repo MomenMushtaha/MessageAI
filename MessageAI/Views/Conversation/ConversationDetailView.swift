@@ -399,7 +399,8 @@ struct ConversationDetailView: View {
                 print("✅ Message edited successfully")
             } catch {
                 print("❌ Failed to edit message: \(error.localizedDescription)")
-                // TODO: Show error alert in next step
+                errorMessage = error.localizedDescription
+                showErrorAlert = true
             }
         }
     }
