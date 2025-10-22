@@ -322,6 +322,9 @@ struct ConversationDetailView: View {
     
     private var messageInputView: some View {
         VStack(spacing: 4) {
+            // Typing indicator
+            TypingIndicatorView(typingUsers: typingUsers, participantUsers: participantUsers)
+
             // Character count warning (only show when approaching limit)
             if messageText.count > 3500 {
                 HStack {
@@ -791,10 +794,15 @@ struct ConversationDetailView: View {
         
         messageText = ""
         isSending = true
-        
+
+        // Stop typing indicator when sending
+        if isCurrentUserTyping {
+            stopTypingIndicator(userId: currentUserId)
+        }
+
         // Ensure auto-scroll for user's own messages
         shouldAutoScroll = true
-        
+
         do {
             try await chatService.sendMessage(
                 conversationId: conversation.id,
