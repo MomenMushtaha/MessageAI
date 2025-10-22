@@ -478,6 +478,11 @@ struct ConversationDetailView: View {
         // Reset to first result
         currentSearchIndex = 0
 
+        // Scroll to first result if results exist
+        if !searchResults.isEmpty {
+            scrollToCurrentSearchResult()
+        }
+
         print("🔍 Search updated: \(searchResults.count) results for '\(searchText)'")
     }
 
@@ -486,6 +491,7 @@ struct ConversationDetailView: View {
             return
         }
         currentSearchIndex += 1
+        scrollToCurrentSearchResult()
         print("🔍 Navigate to result \(currentSearchIndex + 1) of \(searchResults.count)")
     }
 
@@ -494,7 +500,21 @@ struct ConversationDetailView: View {
             return
         }
         currentSearchIndex -= 1
+        scrollToCurrentSearchResult()
         print("🔍 Navigate to result \(currentSearchIndex + 1) of \(searchResults.count)")
+    }
+
+    private func scrollToCurrentSearchResult() {
+        guard !searchResults.isEmpty, currentSearchIndex < searchResults.count,
+              let proxy = scrollProxy else {
+            return
+        }
+
+        let targetMessage = searchResults[currentSearchIndex]
+        withAnimation {
+            proxy.scrollTo(targetMessage.id, anchor: .center)
+        }
+        print("🔍 Scrolling to message: \(targetMessage.id)")
     }
 
     private func saveEditedMessage() {
