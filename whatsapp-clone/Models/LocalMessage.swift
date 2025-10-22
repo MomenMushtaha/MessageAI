@@ -17,8 +17,10 @@ final class LocalMessage {
     var createdAt: Date
     var status: String // sending, sent, delivered, read, error
     var isSynced: Bool
+    var deliveredToString: String // Comma-separated user IDs
+    var readByString: String // Comma-separated user IDs
     
-    init(id: String, conversationId: String, senderId: String, text: String, createdAt: Date, status: String = "sending", isSynced: Bool = false) {
+    init(id: String, conversationId: String, senderId: String, text: String, createdAt: Date, status: String = "sending", isSynced: Bool = false, deliveredTo: [String] = [], readBy: [String] = []) {
         self.id = id
         self.conversationId = conversationId
         self.senderId = senderId
@@ -26,6 +28,19 @@ final class LocalMessage {
         self.createdAt = createdAt
         self.status = status
         self.isSynced = isSynced
+        self.deliveredToString = deliveredTo.joined(separator: ",")
+        self.readByString = readBy.joined(separator: ",")
+    }
+    
+    // Helper properties for array access
+    var deliveredTo: [String] {
+        get { deliveredToString.isEmpty ? [] : deliveredToString.components(separatedBy: ",") }
+        set { deliveredToString = newValue.joined(separator: ",") }
+    }
+    
+    var readBy: [String] {
+        get { readByString.isEmpty ? [] : readByString.components(separatedBy: ",") }
+        set { readByString = newValue.joined(separator: ",") }
     }
     
     // Convert from Firestore Message
@@ -37,7 +52,9 @@ final class LocalMessage {
             text: message.text,
             createdAt: message.createdAt,
             status: message.status,
-            isSynced: isSynced
+            isSynced: isSynced,
+            deliveredTo: message.deliveredTo,
+            readBy: message.readBy
         )
     }
     
@@ -49,7 +66,9 @@ final class LocalMessage {
             senderId: senderId,
             text: text,
             createdAt: createdAt,
-            status: status
+            status: status,
+            deliveredTo: deliveredTo,
+            readBy: readBy
         )
     }
 }

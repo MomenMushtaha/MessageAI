@@ -148,7 +148,9 @@ class ChatService: ObservableObject {
                             senderId: data["senderId"] as? String ?? "",
                             text: data["text"] as? String ?? "",
                             createdAt: (data["createdAt"] as? Timestamp)?.dateValue() ?? Date(),
-                            status: data["status"] as? String ?? "sent"
+                            status: data["status"] as? String ?? "sent",
+                            deliveredTo: data["deliveredTo"] as? [String] ?? [],
+                            readBy: data["readBy"] as? [String] ?? []
                         )
                     }
                     
@@ -184,6 +186,100 @@ class ChatService: ObservableObject {
         messageListeners[conversationId]?.remove()
         messageListeners[conversationId] = nil
         print("🛑 Stopped observing messages for: \(conversationId)")
+    }
+    
+    // MARK: - Mark Messages as Delivered
+    
+    func markMessagesAsDelivered(conversationId: String, userId: String) async {
+        print("📬 Marking messages as delivered for user: \(userId)")
+        
+        do {
+            // Get all messages in conversation that are not from this user
+            let messagesSnapshot = try await db.collection("conversations")
+                .document(conversationId)
+                .collection("messages")
+                .whereField("senderId", isNotEqualTo: userId)
+                .getDocuments()
+            
+            let batch = db.batch()
+            var updateCount = 0
+            
+            for doc in messagesSnapshot.documents {
+                let data = doc.data()
+                let deliveredTo = data["deliveredTo"] as? [String] ?? []
+                
+                // Only update if not already delivered to this user
+                if !deliveredTo.contains(userId) {
+                    let messageRef = db.collection("conversations")
+                        .document(conversationId)
+                        .collection("messages")
+                        .document(doc.documentID)
+                    
+                    batch.updateData([
+                        "deliveredTo": FieldValue.arrayUnion([userId])
+                    ], forDocument: messageRef)
+                    updateCount += 1
+                }
+            }
+            
+            if updateCount > 0 {
+                try await batch.commit()
+                print("✅ Marked \(updateCount) messages as delivered")
+            }
+        } catch {
+            print("❌ Error marking messages as delivered: \(error.localizedDescription)")
+        }
+    }
+    
+    // MARK: - Mark Messages as Read
+    
+    func markMessagesAsRead(conversationId: String, userId: String) async {
+        print("👁️ Marking messages as read for user: \(userId)")
+        
+        do {
+            // Get all messages in conversation that are not from this user
+            let messagesSnapshot = try await db.collection("conversations")
+                .document(conversationId)
+                .collection("messages")
+                .whereField("senderId", isNotEqualTo: userId)
+                .getDocuments()
+            
+            let batch = db.batch()
+            var updateCount = 0
+            
+            for doc in messagesSnapshot.documents {
+                let data = doc.data()
+                let readBy = data["readBy"] as? [String] ?? []
+                let deliveredTo = data["deliveredTo"] as? [String] ?? []
+                
+                // Only update if not already read by this user
+                if !readBy.contains(userId) {
+                    let messageRef = db.collection("conversations")
+                        .document(conversationId)
+                        .collection("messages")
+                        .document(doc.documentID)
+                    
+                    var updates: [String: Any] = [
+                        "readBy": FieldValue.arrayUnion([userId])
+                    ]
+                    
+                    // Also mark as delivered if not already
+                    if !deliveredTo.contains(userId) {
+                        updates["deliveredTo"] = FieldValue.arrayUnion([userId])
+                    }
+                    
+                    batch.updateData(updates, forDocument: messageRef)
+                    updateCount += 1
+                }
+            }
+            
+            if updateCount > 0 {
+                try await batch.commit()
+                print("✅ Marked \(updateCount) messages as read")
+            }
+        } catch {
+            print("❌ Error marking messages as read: \(error.localizedDescription)")
+        }
     }
     
     // MARK: - Send Message
@@ -225,7 +321,9 @@ class ChatService: ObservableObject {
             "senderId": senderId,
             "text": text,
             "createdAt": FieldValue.serverTimestamp(),
-            "status": "sent"
+            "status": "sent",
+            "deliveredTo": [], // Will be populated as recipients receive
+            "readBy": [] // Will be populated as recipients read
         ]
         
         let conversationRef = db.collection("conversations").document(conversationId)
@@ -395,14 +493,51 @@ struct Message: Identifiable, Codable, Hashable {
     let text: String
     let createdAt: Date
     var status: String // sending, sent, delivered, read
+    var deliveredTo: [String] // Array of user IDs who have received the message
+    var readBy: [String] // Array of user IDs who have read the message
     
-    init(id: String, conversationId: String, senderId: String, text: String, createdAt: Date, status: String = "sent") {
+    init(id: String, conversationId: String, senderId: String, text: String, createdAt: Date, status: String = "sent", deliveredTo: [String] = [], readBy: [String] = []) {
         self.id = id
         self.conversationId = conversationId
         self.senderId = senderId
         self.text = text
         self.createdAt = createdAt
         self.status = status
+        self.deliveredTo = deliveredTo
+        self.readBy = readBy
+    }
+    
+    // Helper to determine overall status for UI display
+    func displayStatus(for conversation: Conversation, currentUserId: String) -> String {
+        // Only show status for messages sent by current user
+        guard senderId == currentUserId else { return "" }
+        
+        // If still sending or error, show that status
+        if status == "sending" || status == "error" {
+            return status
+        }
+        
+        // Get other participants (excluding sender)
+        let otherParticipants = conversation.participantIds.filter { $0 != senderId }
+        
+        if otherParticipants.isEmpty {
+            return "sent"
+        }
+        
+        // Check if all recipients have read
+        let allRead = otherParticipants.allSatisfy { readBy.contains($0) }
+        if allRead {
+            return "read"
+        }
+        
+        // Check if all recipients have received
+        let allDelivered = otherParticipants.allSatisfy { deliveredTo.contains($0) }
+        if allDelivered {
+            return "delivered"
+        }
+        
+        // Otherwise just sent
+        return "sent"
     }
 }
 

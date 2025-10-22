@@ -30,6 +30,13 @@
 - Sender names displayed in group messages
 - Participant list view implemented
 
+✅ **Step 6: Message Status & Read Receipts - COMPLETED**
+- Message model updated with deliveredTo and readBy arrays
+- ChatService methods for marking messages as delivered/read
+- ConversationDetailView auto-marks messages when opened
+- Status icons: single check (sent), double check (delivered), blue double check (read)
+- LocalMessage model updated with receipt tracking
+
 ## Next Steps
 
 ### 🎯 Step 1: Basic UI Structure & Navigation

@@ -32,7 +32,9 @@ struct ConversationDetailView: View {
                                 MessageBubbleRow(
                                     message: message,
                                     isFromCurrentUser: message.senderId == authService.currentUser?.id,
-                                    senderName: getSenderName(for: message)
+                                    senderName: getSenderName(for: message),
+                                    conversation: conversation,
+                                    currentUserId: authService.currentUser?.id ?? ""
                                 )
                                 .id(message.id)
                             }
@@ -93,6 +95,7 @@ struct ConversationDetailView: View {
         .onAppear {
             chatService.observeMessages(conversationId: conversation.id)
             loadParticipantUsers()
+            markMessagesAsDeliveredAndRead()
         }
         .onDisappear {
             chatService.stopObservingMessages(conversationId: conversation.id)
@@ -209,6 +212,18 @@ struct ConversationDetailView: View {
         }
     }
     
+    private func markMessagesAsDeliveredAndRead() {
+        guard let currentUserId = authService.currentUser?.id else { return }
+        
+        Task {
+            // First mark as delivered
+            await chatService.markMessagesAsDelivered(conversationId: conversation.id, userId: currentUserId)
+            
+            // Then mark as read (since user is viewing the conversation)
+            await chatService.markMessagesAsRead(conversationId: conversation.id, userId: currentUserId)
+        }
+    }
+    
     private func sendMessage() async {
         guard !messageText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               let currentUserId = authService.currentUser?.id else {
@@ -239,6 +254,8 @@ struct MessageBubbleRow: View {
     let message: Message
     let isFromCurrentUser: Bool
     let senderName: String?
+    let conversation: Conversation
+    let currentUserId: String
     
     var body: some View {
         HStack {
@@ -258,7 +275,7 @@ struct MessageBubbleRow: View {
                 Text(message.text)
                     .padding(.horizontal, 12)
                     .padding(.vertical, 8)
-                    .background(isFromCurrentUser ? (message.status == "error" ? Color.red.opacity(0.7) : Color.blue) : Color(.systemGray5))
+                    .background(isFromCurrentUser ? (message.displayStatus(for: conversation, currentUserId: currentUserId) == "error" ? Color.red.opacity(0.7) : Color.blue) : Color(.systemGray5))
                     .foregroundStyle(isFromCurrentUser ? .white : .primary)
                     .cornerRadius(16)
                 
@@ -282,7 +299,9 @@ struct MessageBubbleRow: View {
     
     @ViewBuilder
     private var statusIcon: some View {
-        switch message.status {
+        let displayStatus = message.displayStatus(for: conversation, currentUserId: currentUserId)
+        
+        switch displayStatus {
         case "sending":
             ProgressView()
                 .scaleEffect(0.7)
