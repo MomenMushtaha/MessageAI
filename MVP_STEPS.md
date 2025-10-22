@@ -37,6 +37,14 @@
 - Status icons: single check (sent), double check (delivered), blue double check (read)
 - LocalMessage model updated with receipt tracking
 
+✅ **Step 7: User Presence (Online/Offline Status) - COMPLETED**
+- PresenceService created with heartbeat mechanism
+- User model updated with isOnline and lastSeen properties
+- Auto-updates presence on app foreground/background
+- ConversationDetailView shows "Online" or "Last seen X ago"
+- ChatListView shows green dot for online users
+- Presence tracking starts on login, stops on logout
+
 ## Next Steps
 
 ### 🎯 Step 1: Basic UI Structure & Navigation

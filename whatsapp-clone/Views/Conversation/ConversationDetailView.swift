@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import FirebaseFirestore
 
 struct ConversationDetailView: View {
     let conversation: Conversation
@@ -17,6 +18,8 @@ struct ConversationDetailView: View {
     @State private var isSending = false
     @State private var participantUsers: [String: User] = [:] // userId -> User cache
     @State private var showParticipantList = false
+    @State private var otherUserPresence: (isOnline: Bool, lastSeen: Date?) = (false, nil)
+    @State private var presenceListener: ListenerRegistration?
     @Environment(\.dismiss) private var dismiss
     
     var body: some View {
@@ -73,9 +76,16 @@ struct ConversationDetailView: View {
                             .font(.headline)
                         
                         if conversation.type == .direct {
-                            Text("Tap to view profile")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
+                            HStack(spacing: 4) {
+                                if otherUserPresence.isOnline {
+                                    Circle()
+                                        .fill(Color.green)
+                                        .frame(width: 6, height: 6)
+                                }
+                                Text(presenceStatusText)
+                                    .font(.caption)
+                                    .foregroundStyle(otherUserPresence.isOnline ? .green : .secondary)
+                            }
                         } else {
                             Text("\(conversation.participantIds.count) participants")
                                 .font(.caption)
@@ -96,9 +106,11 @@ struct ConversationDetailView: View {
             chatService.observeMessages(conversationId: conversation.id)
             loadParticipantUsers()
             markMessagesAsDeliveredAndRead()
+            startObservingPresence()
         }
         .onDisappear {
             chatService.stopObservingMessages(conversationId: conversation.id)
+            stopObservingPresence()
         }
     }
     
@@ -170,6 +182,36 @@ struct ConversationDetailView: View {
         }
     }
     
+    private var presenceStatusText: String {
+        if conversation.type != .direct {
+            return ""
+        }
+        
+        if otherUserPresence.isOnline {
+            return "Online"
+        }
+        
+        guard let lastSeen = otherUserPresence.lastSeen else {
+            return "Last seen recently"
+        }
+        
+        let now = Date()
+        let timeInterval = now.timeIntervalSince(lastSeen)
+        
+        if timeInterval < 60 {
+            return "Last seen just now"
+        } else if timeInterval < 3600 {
+            let minutes = Int(timeInterval / 60)
+            return "Last seen \(minutes)m ago"
+        } else if timeInterval < 86400 {
+            let hours = Int(timeInterval / 3600)
+            return "Last seen \(hours)h ago"
+        } else {
+            let days = Int(timeInterval / 86400)
+            return "Last seen \(days)d ago"
+        }
+    }
+    
     private func getSenderName(for message: Message) -> String? {
         guard conversation.type == .group else { return nil }
         
@@ -222,6 +264,25 @@ struct ConversationDetailView: View {
             // Then mark as read (since user is viewing the conversation)
             await chatService.markMessagesAsRead(conversationId: conversation.id, userId: currentUserId)
         }
+    }
+    
+    private func startObservingPresence() {
+        // Only observe presence for direct conversations
+        guard conversation.type == .direct,
+              let otherUserId = conversation.participantIds.first(where: { $0 != authService.currentUser?.id }) else {
+            return
+        }
+        
+        presenceListener = PresenceService.shared.observeUserPresence(userId: otherUserId) { isOnline, lastSeen in
+            Task { @MainActor in
+                self.otherUserPresence = (isOnline, lastSeen)
+            }
+        }
+    }
+    
+    private func stopObservingPresence() {
+        presenceListener?.remove()
+        presenceListener = nil
     }
     
     private func sendMessage() async {

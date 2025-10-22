@@ -126,6 +126,13 @@ class AuthService: ObservableObject {
     
     func logout() throws {
         do {
+            // Stop presence tracking before logout
+            if let userId = currentUser?.id {
+                Task {
+                    await PresenceService.shared.stopPresenceTracking(userId: userId)
+                }
+            }
+            
             try auth.signOut()
             currentUser = nil
             isAuthenticated = false
@@ -145,7 +152,9 @@ class AuthService: ObservableObject {
             "displayName": user.displayName,
             "email": user.email,
             "avatarURL": user.avatarURL as Any,
-            "createdAt": Timestamp(date: user.createdAt)
+            "createdAt": Timestamp(date: user.createdAt),
+            "isOnline": true, // New user starts online
+            "lastSeen": FieldValue.serverTimestamp()
         ]
         
         print("📝 Writing to Firestore: users/\(user.id)")
@@ -169,11 +178,18 @@ class AuthService: ObservableObject {
                     displayName: data["displayName"] as? String ?? "Unknown",
                     email: data["email"] as? String ?? "",
                     avatarURL: data["avatarURL"] as? String,
-                    createdAt: (data["createdAt"] as? Timestamp)?.dateValue() ?? Date()
+                    createdAt: (data["createdAt"] as? Timestamp)?.dateValue() ?? Date(),
+                    isOnline: data["isOnline"] as? Bool ?? false,
+                    lastSeen: (data["lastSeen"] as? Timestamp)?.dateValue()
                 )
                 
                 currentUser = user
                 isAuthenticated = true
+                
+                // Start presence tracking
+                Task {
+                    await PresenceService.shared.startPresenceTracking(userId: userId)
+                }
             }
             
         } catch {

@@ -208,23 +208,37 @@ struct ConversationRow: View {
     
     var body: some View {
         HStack(spacing: 12) {
-            // Avatar
-            Circle()
-                .fill(conversation.type == .group ? Color.purple : Color.blue)
-                .frame(width: 52, height: 52)
-                .overlay {
-                    if conversation.type == .group {
-                        Image(systemName: "person.3.fill")
-                            .foregroundStyle(.white)
-                    } else if let user = otherUser {
-                        Text(user.initials)
-                            .font(.headline)
-                            .foregroundStyle(.white)
-                    } else {
-                        Image(systemName: "person.fill")
-                            .foregroundStyle(.white)
+            // Avatar with online indicator
+            ZStack(alignment: .bottomTrailing) {
+                Circle()
+                    .fill(conversation.type == .group ? Color.purple : Color.blue)
+                    .frame(width: 52, height: 52)
+                    .overlay {
+                        if conversation.type == .group {
+                            Image(systemName: "person.3.fill")
+                                .foregroundStyle(.white)
+                        } else if let user = otherUser {
+                            Text(user.initials)
+                                .font(.headline)
+                                .foregroundStyle(.white)
+                        } else {
+                            Image(systemName: "person.fill")
+                                .foregroundStyle(.white)
+                        }
                     }
+                
+                // Online indicator for direct chats
+                if conversation.type == .direct, let user = otherUser, user.isOnline {
+                    Circle()
+                        .fill(Color.green)
+                        .frame(width: 14, height: 14)
+                        .overlay(
+                            Circle()
+                                .stroke(Color(.systemBackground), lineWidth: 2)
+                        )
+                        .offset(x: 2, y: 2)
                 }
+            }
             
             // Content
             VStack(alignment: .leading, spacing: 4) {

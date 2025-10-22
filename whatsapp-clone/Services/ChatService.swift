@@ -39,7 +39,9 @@ class ChatService: ObservableObject {
                     displayName: data["displayName"] as? String ?? "Unknown",
                     email: data["email"] as? String ?? "",
                     avatarURL: data["avatarURL"] as? String,
-                    createdAt: (data["createdAt"] as? Timestamp)?.dateValue() ?? Date()
+                    createdAt: (data["createdAt"] as? Timestamp)?.dateValue() ?? Date(),
+                    isOnline: data["isOnline"] as? Bool ?? false,
+                    lastSeen: (data["lastSeen"] as? Timestamp)?.dateValue()
                 )
             }
             
@@ -433,7 +435,9 @@ class ChatService: ObservableObject {
             displayName: data["displayName"] as? String ?? "Unknown",
             email: data["email"] as? String ?? "",
             avatarURL: data["avatarURL"] as? String,
-            createdAt: (data["createdAt"] as? Timestamp)?.dateValue() ?? Date()
+            createdAt: (data["createdAt"] as? Timestamp)?.dateValue() ?? Date(),
+            isOnline: data["isOnline"] as? Bool ?? false,
+            lastSeen: (data["lastSeen"] as? Timestamp)?.dateValue()
         )
     }
     
