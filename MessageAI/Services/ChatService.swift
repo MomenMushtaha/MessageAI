@@ -1055,6 +1055,86 @@ class ChatService: ObservableObject {
         print("✅ Message forwarded successfully to all conversations")
     }
 
+    // MARK: - Group Management
+
+    /// Add participants to a group conversation
+    func addParticipants(conversationId: String, userIds: [String], adminId: String) async throws {
+        let conversationRef = db.collection("conversations").document(conversationId)
+
+        // Verify admin permissions
+        let doc = try await conversationRef.getDocument()
+        guard let conversation = try? doc.data(as: Conversation.self) else {
+            throw NSError(domain: "ChatService", code: 404, userInfo: [NSLocalizedDescriptionKey: "Conversation not found"])
+        }
+
+        guard conversation.isAdmin(adminId) else {
+            throw NSError(domain: "ChatService", code: 403, userInfo: [NSLocalizedDescriptionKey: "Only admins can add participants"])
+        }
+
+        try await conversationRef.updateData([
+            "participantIds": FieldValue.arrayUnion(userIds)
+        ])
+
+        // Send system message for each added user
+        for userId in userIds {
+            let systemMessage = "Added to group"
+            try await sendMessage(conversationId: conversationId, senderId: userId, text: systemMessage)
+        }
+
+        print("✅ Added \(userIds.count) participant(s) to conversation")
+    }
+
+    /// Remove a participant from a group conversation
+    func removeParticipant(conversationId: String, userId: String, adminId: String) async throws {
+        let conversationRef = db.collection("conversations").document(conversationId)
+
+        // Verify admin permissions
+        let doc = try await conversationRef.getDocument()
+        guard let conversation = try? doc.data(as: Conversation.self) else {
+            throw NSError(domain: "ChatService", code: 404, userInfo: [NSLocalizedDescriptionKey: "Conversation not found"])
+        }
+
+        guard conversation.isAdmin(adminId) else {
+            throw NSError(domain: "ChatService", code: 403, userInfo: [NSLocalizedDescriptionKey: "Only admins can remove participants"])
+        }
+
+        // Prevent removing last admin
+        if conversation.isAdmin(userId) {
+            let adminCount = conversation.adminIds?.count ?? 0
+            if adminCount <= 1 {
+                throw NSError(domain: "ChatService", code: 400, userInfo: [NSLocalizedDescriptionKey: "Cannot remove the last admin"])
+            }
+        }
+
+        try await conversationRef.updateData([
+            "participantIds": FieldValue.arrayRemove([userId]),
+            "adminIds": FieldValue.arrayRemove([userId])
+        ])
+
+        print("✅ Removed participant from conversation")
+    }
+
+    /// Promote a user to admin
+    func makeAdmin(conversationId: String, userId: String, currentAdminId: String) async throws {
+        let conversationRef = db.collection("conversations").document(conversationId)
+
+        // Verify current user is admin
+        let doc = try await conversationRef.getDocument()
+        guard let conversation = try? doc.data(as: Conversation.self) else {
+            throw NSError(domain: "ChatService", code: 404, userInfo: [NSLocalizedDescriptionKey: "Conversation not found"])
+        }
+
+        guard conversation.isAdmin(currentAdminId) else {
+            throw NSError(domain: "ChatService", code: 403, userInfo: [NSLocalizedDescriptionKey: "Only admins can make others admin"])
+        }
+
+        try await conversationRef.updateData([
+            "adminIds": FieldValue.arrayUnion([userId])
+        ])
+
+        print("✅ User \(userId) promoted to admin")
+    }
+
     // MARK: - Sync Pending Messages
     
     func syncPendingMessages() async {

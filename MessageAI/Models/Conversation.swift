@@ -23,7 +23,8 @@ struct Conversation: Identifiable, Codable, Hashable {
     // Group-specific properties
     var groupName: String?
     var groupAvatarURL: String?
-    
+    var adminIds: [String]? // Array of user IDs who are admins (group creator + appointed admins)
+
     init(
         id: String,
         type: ConversationType = .direct,
@@ -32,6 +33,7 @@ struct Conversation: Identifiable, Codable, Hashable {
         lastMessageAt: Date? = nil,
         groupName: String? = nil,
         groupAvatarURL: String? = nil,
+        adminIds: [String]? = nil,
         createdAt: Date = Date()
     ) {
         self.id = id
@@ -41,7 +43,13 @@ struct Conversation: Identifiable, Codable, Hashable {
         self.lastMessageAt = lastMessageAt
         self.groupName = groupName
         self.groupAvatarURL = groupAvatarURL
+        self.adminIds = adminIds
         self.createdAt = createdAt
+    }
+
+    // Helper to check if user is admin
+    func isAdmin(_ userId: String) -> Bool {
+        return adminIds?.contains(userId) ?? false
     }
     
     // Helper to get conversation title (for display)
