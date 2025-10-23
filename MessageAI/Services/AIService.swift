@@ -17,7 +17,7 @@ class AIService: ObservableObject {
     @Published var lastError: String?
     
     // Configuration
-    private let openAIAPIKey: String = "YOUR_OPENAI_API_KEY" // TODO: Set this in environment variables
+    private let openAIAPIKey: String
     private let openAIBaseURL = "https://api.openai.com/v1"
     private let model = "gpt-4o-mini" // Fast and cost-effective
     
@@ -25,7 +25,17 @@ class AIService: ObservableObject {
     private var summaryCache: [String: ConversationSummary] = [:]
     private var actionItemCache: [String: [ActionItem]] = [:]
     
-    private init() {}
+    private init() {
+        // Load API key from environment/info.plist
+        if let apiKey = Bundle.main.object(forInfoDictionaryKey: "OPENAI_API_KEY") as? String,
+           !apiKey.isEmpty && apiKey != "YOUR_OPENAI_API_KEY_HERE" {
+            self.openAIAPIKey = apiKey
+        } else {
+            // Fallback to placeholder for demo mode
+            self.openAIAPIKey = "YOUR_OPENAI_API_KEY"
+            print("⚠️ OpenAI API key not configured. AI features will use mock responses.")
+        }
+    }
     
     // MARK: - 1. Thread Summarization
     

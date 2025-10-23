@@ -61,3 +61,13 @@ Config.plist
 secrets.plist
 ApiKeys.plist
 GoogleService-Info.plist
+Config.xcconfig
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+*.p12
+*.mobileprovision
+credentials.json
+auth.json

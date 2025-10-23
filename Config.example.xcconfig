@@ -1,0 +1,10 @@
+// Example Configuration file - Safe to commit
+// Copy this file to Config.xcconfig and replace with your actual values
+
+// OpenAI API Configuration
+OPENAI_API_KEY = YOUR_OPENAI_API_KEY_HERE
+
+// Add other sensitive configuration here as needed
+// Example:
+// ANALYTICS_KEY = your_analytics_key
+// THIRD_PARTY_SERVICE_ID = your_service_id
