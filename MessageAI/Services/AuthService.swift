@@ -185,6 +185,56 @@ class AuthService: ObservableObject {
         }
     }
 
+    func updatePrivacySettings(
+        userId: String,
+        showReadReceipts: Bool? = nil,
+        showOnlineStatus: Bool? = nil,
+        showLastSeen: Bool? = nil
+    ) async throws {
+        var updateData: [String: Any] = [:]
+
+        if let showReadReceipts = showReadReceipts {
+            updateData["privacySettings.showReadReceipts"] = showReadReceipts
+        }
+
+        if let showOnlineStatus = showOnlineStatus {
+            updateData["privacySettings.showOnlineStatus"] = showOnlineStatus
+        }
+
+        if let showLastSeen = showLastSeen {
+            updateData["privacySettings.showLastSeen"] = showLastSeen
+        }
+
+        guard !updateData.isEmpty else { return }
+
+        do {
+            try await db.collection("users").document(userId).updateData(updateData)
+
+            // Update local currentUser
+            if var user = currentUser {
+                var settings = user.privacySettings ?? UserPrivacySettings()
+
+                if let showReadReceipts = showReadReceipts {
+                    settings.showReadReceipts = showReadReceipts
+                }
+                if let showOnlineStatus = showOnlineStatus {
+                    settings.showOnlineStatus = showOnlineStatus
+                }
+                if let showLastSeen = showLastSeen {
+                    settings.showLastSeen = showLastSeen
+                }
+
+                user.privacySettings = settings
+                currentUser = user
+            }
+
+            print("✅ Privacy settings updated successfully")
+        } catch {
+            print("❌ Error updating privacy settings: \(error.localizedDescription)")
+            throw error
+        }
+    }
+
     // MARK: - Firestore Operations
     
     private func createUserDocument(user: User) async throws {

@@ -16,8 +16,9 @@ struct User: Identifiable, Codable, Hashable {
     var createdAt: Date
     var isOnline: Bool
     var lastSeen: Date?
+    var privacySettings: UserPrivacySettings?
 
-    init(id: String, displayName: String, email: String, avatarURL: String? = nil, bio: String? = nil, createdAt: Date = Date(), isOnline: Bool = false, lastSeen: Date? = nil) {
+    init(id: String, displayName: String, email: String, avatarURL: String? = nil, bio: String? = nil, createdAt: Date = Date(), isOnline: Bool = false, lastSeen: Date? = nil, privacySettings: UserPrivacySettings? = nil) {
         self.id = id
         self.displayName = displayName
         self.email = email
@@ -26,6 +27,7 @@ struct User: Identifiable, Codable, Hashable {
         self.createdAt = createdAt
         self.isOnline = isOnline
         self.lastSeen = lastSeen
+        self.privacySettings = privacySettings
     }
     
     // Helper to get initials for avatar
@@ -65,6 +67,35 @@ struct User: Identifiable, Codable, Hashable {
             formatter.timeStyle = .none
             return "Last seen \(formatter.string(from: lastSeen))"
         }
+    }
+
+    // Helper to check if user wants to show online status
+    var showsOnlineStatus: Bool {
+        return privacySettings?.showOnlineStatus ?? true
+    }
+
+    // Helper to check if user wants to show last seen
+    var showsLastSeen: Bool {
+        return privacySettings?.showLastSeen ?? true
+    }
+
+    // Helper to check if user wants to show read receipts
+    var showsReadReceipts: Bool {
+        return privacySettings?.showReadReceipts ?? true
+    }
+}
+
+// MARK: - User Privacy Settings
+
+struct UserPrivacySettings: Codable, Hashable {
+    var showReadReceipts: Bool = true
+    var showOnlineStatus: Bool = true
+    var showLastSeen: Bool = true
+
+    init(showReadReceipts: Bool = true, showOnlineStatus: Bool = true, showLastSeen: Bool = true) {
+        self.showReadReceipts = showReadReceipts
+        self.showOnlineStatus = showOnlineStatus
+        self.showLastSeen = showLastSeen
     }
 }
 

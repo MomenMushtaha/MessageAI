@@ -234,14 +234,14 @@ struct ConversationDetailView: View {
                         
                         if conversation.type == .direct {
                             HStack(spacing: 4) {
-                                if otherUserPresence.isOnline {
+                                if otherUserPresence.isOnline && otherUser?.showsOnlineStatus == true {
                                     Circle()
                                         .fill(Color.green)
                                         .frame(width: 6, height: 6)
                                 }
                                 Text(presenceStatusText)
                                     .font(.caption)
-                                    .foregroundStyle(otherUserPresence.isOnline ? .green : .secondary)
+                                    .foregroundStyle(otherUserPresence.isOnline && otherUser?.showsOnlineStatus == true ? .green : .secondary)
                             }
                         } else {
                             Text("\(conversation.participantIds.count) participants")
@@ -945,17 +945,27 @@ struct ConversationDetailView: View {
             return ""
         }
         
+        // Check if user allows showing online status
         if otherUserPresence.isOnline {
-            return "Online"
+            if otherUser?.showsOnlineStatus == true {
+                return "Online"
+            } else {
+                return "" // Hide online status if privacy setting is off
+            }
         }
-        
+
+        // Check if user allows showing last seen
+        if otherUser?.showsLastSeen == false {
+            return "" // Hide last seen if privacy setting is off
+        }
+
         guard let lastSeen = otherUserPresence.lastSeen else {
             return "Last seen recently"
         }
-        
+
         let now = Date()
         let timeInterval = now.timeIntervalSince(lastSeen)
-        
+
         if timeInterval < 60 {
             return "Last seen just now"
         } else if timeInterval < 3600 {

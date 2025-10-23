@@ -462,7 +462,14 @@ class ChatService: ObservableObject {
     
     func markMessagesAsRead(conversationId: String, userId: String) async {
         print("👁️ Marking messages as read for user: \(userId)")
-        
+
+        // Check if user has read receipts enabled
+        let userDoc = try? await db.collection("users").document(userId).getDocument()
+        let user = try? userDoc?.data(as: User.self)
+
+        // If read receipts are disabled, don't mark as read (but still mark as delivered)
+        let shouldMarkAsRead = user?.showsReadReceipts ?? true
+
         do {
             // Get all messages in conversation that are not from this user
             let messagesSnapshot = try await db.collection("conversations")
@@ -479,24 +486,29 @@ class ChatService: ObservableObject {
                 let readBy = data["readBy"] as? [String] ?? []
                 let deliveredTo = data["deliveredTo"] as? [String] ?? []
                 
-                // Only update if not already read by this user
-                if !readBy.contains(userId) {
+                // Only update if not already processed by this user
+                if !readBy.contains(userId) || (!deliveredTo.contains(userId)) {
                     let messageRef = db.collection("conversations")
                         .document(conversationId)
                         .collection("messages")
                         .document(doc.documentID)
-                    
-                    var updates: [String: Any] = [
-                        "readBy": FieldValue.arrayUnion([userId])
-                    ]
-                    
-                    // Also mark as delivered if not already
+
+                    var updates: [String: Any] = [:]
+
+                    // Only mark as read if privacy setting allows
+                    if shouldMarkAsRead && !readBy.contains(userId) {
+                        updates["readBy"] = FieldValue.arrayUnion([userId])
+                    }
+
+                    // Always mark as delivered regardless of privacy
                     if !deliveredTo.contains(userId) {
                         updates["deliveredTo"] = FieldValue.arrayUnion([userId])
                     }
-                    
-                    batch.updateData(updates, forDocument: messageRef)
-                    updateCount += 1
+
+                    if !updates.isEmpty {
+                        batch.updateData(updates, forDocument: messageRef)
+                        updateCount += 1
+                    }
                 }
             }
             
