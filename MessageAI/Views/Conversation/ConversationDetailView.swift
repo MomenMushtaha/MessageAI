@@ -20,6 +20,8 @@ struct ConversationDetailView: View {
     @State private var selectedPhotoItem: PhotosPickerItem? // Selected photo from picker
     @State private var isUploadingImage = false // Image upload in progress
     @State private var uploadProgress: Double = 0.0 // Upload progress (0.0 to 1.0)
+    @State private var isRecordingVoice = false // Voice recording in progress
+    @StateObject private var audioService = AudioService.shared
     @State private var participantUsers: [String: User] = [:] // userId -> User cache
     @State private var showParticipantList = false
     @State private var otherUserPresence: (isOnline: Bool, lastSeen: Date?) = (false, nil)
@@ -378,6 +380,20 @@ struct ConversationDetailView: View {
                 )
             }
         }
+        .sheet(isPresented: $isRecordingVoice) {
+            VoiceRecordingView(
+                audioService: audioService,
+                isRecording: $isRecordingVoice,
+                onSend: { url, duration in
+                    Task {
+                        await sendVoiceMessage(audioURL: url, duration: duration)
+                    }
+                },
+                onCancel: {
+                    isRecordingVoice = false
+                }
+            )
+        }
         .onAppear {
             // Load participant users first (especially important for new groups)
             loadParticipantUsers()
@@ -496,7 +512,7 @@ struct ConversationDetailView: View {
                         .font(.system(size: 22))
                         .foregroundStyle(.blue)
                 }
-                .disabled(isUploadingImage || isSending)
+                .disabled(isUploadingImage || isSending || isRecordingVoice)
                 .onChange(of: selectedPhotoItem) { _, newItem in
                     handlePhotoSelection(newItem)
                 }
@@ -508,35 +524,55 @@ struct ConversationDetailView: View {
                         .padding(.horizontal, 16)
                         .padding(.vertical, 10)
                         .font(.body)
+                        .disabled(isRecordingVoice)
                         .onChange(of: messageText) { oldValue, newValue in
                             handleTypingChange(oldValue: oldValue, newValue: newValue)
                         }
                 }
                 .background(Color(.systemGray6))
                 .cornerRadius(24)
-            
-            // Send Button
-            Button(action: {
-                Task {
-                    await sendMessage()
-                }
-            }) {
-                ZStack {
-                    Circle()
-                        .fill(messageText.isEmpty ? Color(.systemGray4) : Color.blue)
-                        .frame(width: 38, height: 38)
-                    
-                    if isSending {
-                        ProgressView()
-                            .tint(.white)
-                    } else {
-                        Image(systemName: "arrow.up")
-                            .font(.system(size: 18, weight: .semibold))
-                            .foregroundStyle(.white)
+
+                // Voice or Send Button
+                if messageText.isEmpty && !isRecordingVoice {
+                    // Voice Recording Button
+                    Button(action: {
+                        startVoiceRecording()
+                    }) {
+                        ZStack {
+                            Circle()
+                                .fill(Color.blue)
+                                .frame(width: 38, height: 38)
+
+                            Image(systemName: "mic.fill")
+                                .font(.system(size: 18))
+                                .foregroundStyle(.white)
+                        }
                     }
+                    .disabled(isUploadingImage || isSending)
+                } else if !isRecordingVoice {
+                    // Send Button
+                    Button(action: {
+                        Task {
+                            await sendMessage()
+                        }
+                    }) {
+                        ZStack {
+                            Circle()
+                                .fill(messageText.isEmpty ? Color(.systemGray4) : Color.blue)
+                                .frame(width: 38, height: 38)
+
+                            if isSending {
+                                ProgressView()
+                                    .tint(.white)
+                            } else {
+                                Image(systemName: "arrow.up")
+                                    .font(.system(size: 18, weight: .semibold))
+                                    .foregroundStyle(.white)
+                            }
+                        }
+                    }
+                    .disabled(messageText.isEmpty || isSending)
                 }
-            }
-                .disabled(messageText.isEmpty || isSending)
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 10)
@@ -1117,6 +1153,84 @@ struct ConversationDetailView: View {
         uploadProgress = 0.0
     }
 
+    // MARK: - Voice Message Handling
+
+    private func startVoiceRecording() {
+        Task {
+            do {
+                _ = try await audioService.startRecording()
+                await MainActor.run {
+                    isRecordingVoice = true
+                }
+            } catch {
+                await MainActor.run {
+                    errorMessage = "Failed to start recording: \(error.localizedDescription)"
+                    showErrorAlert = true
+                }
+            }
+        }
+    }
+
+    private func sendVoiceMessage(audioURL: URL, duration: TimeInterval) async {
+        guard let currentUserId = authService.currentUser?.id else {
+            return
+        }
+
+        // Load audio data
+        guard let audioData = try? Data(contentsOf: audioURL) else {
+            await MainActor.run {
+                errorMessage = "Failed to load audio data"
+                showErrorAlert = true
+            }
+            return
+        }
+
+        isUploadingImage = true
+        uploadProgress = 0.0
+
+        // Stop typing indicator when sending voice message
+        if isCurrentUserTyping {
+            stopTypingIndicator(userId: currentUserId)
+        }
+
+        // Ensure auto-scroll for user's own messages
+        shouldAutoScroll = true
+
+        do {
+            try await chatService.sendVoiceMessage(
+                conversationId: conversation.id,
+                senderId: currentUserId,
+                audioData: audioData,
+                duration: duration,
+                progressHandler: { progress in
+                    Task { @MainActor in
+                        self.uploadProgress = progress
+                    }
+                }
+            )
+
+            // Scroll to bottom after sending
+            if let proxy = scrollProxy {
+                scrollToBottomAnimated(proxy: proxy)
+            }
+
+            print("✅ Voice message sent successfully")
+
+            // Clean up the temporary file
+            try? FileManager.default.removeItem(at: audioURL)
+
+        } catch {
+            print("❌ Error sending voice message: \(error.localizedDescription)")
+            await MainActor.run {
+                errorMessage = "Failed to send voice message: \(error.localizedDescription)"
+                showErrorAlert = true
+            }
+        }
+
+        isUploadingImage = false
+        uploadProgress = 0.0
+    }
+
     // MARK: - Scroll Helpers
     
     private func scrollToBottom(proxy: ScrollViewProxy, animated: Bool = true) {
@@ -1195,6 +1309,14 @@ struct MessageBubbleRow: View, Equatable {
                             message: message,
                             isFromCurrentUser: isFromCurrentUser,
                             onTap: onImageTap
+                        )
+                        .onTapGesture(count: 2) {
+                            onReactionTap()
+                        }
+                    } else if message.mediaType == "audio" {
+                        AudioMessageView(
+                            message: message,
+                            isFromCurrentUser: isFromCurrentUser
                         )
                         .onTapGesture(count: 2) {
                             onReactionTap()
