@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Microphone Usage - Required for voice messages -->
+	<key>NSMicrophoneUsageDescription</key>
+	<string>MessageAI needs access to your microphone to record and send voice messages to your contacts.</string>
+
+	<!-- Camera Usage - Required for taking photos/videos -->
+	<key>NSCameraUsageDescription</key>
+	<string>MessageAI needs access to your camera to take photos and videos to share with your contacts.</string>
+
+	<!-- Photo Library Usage - Required for selecting photos/videos -->
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>MessageAI needs access to your photo library to select photos and videos to share with your contacts.</string>
+
+	<!-- Photo Library Add Usage - Required for saving photos -->
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>MessageAI needs permission to save photos and videos to your photo library.</string>
+</dict>
+</plist>
