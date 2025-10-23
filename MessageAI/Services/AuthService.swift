@@ -141,8 +141,10 @@ class AuthService: ObservableObject {
             // Clear all caches for memory efficiency
             Task { @MainActor in
                 CacheManager.shared.clearAllCaches()
+                // Reset rate limiter
+                RateLimiter.shared.reset()
             }
-            
+
         } catch let error as NSError {
             errorMessage = "Failed to logout: \(error.localizedDescription)"
             throw error

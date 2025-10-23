@@ -162,6 +162,13 @@ class PresenceService: ObservableObject {
     // MARK: - Typing Indicators
 
     func startTyping(userId: String, conversationId: String) async {
+        // Check rate limit
+        let canSend = await RateLimiter.shared.canSendTypingIndicator()
+        guard canSend else {
+            print("⚠️ Typing indicator rate limited")
+            return
+        }
+
         do {
             let typingData: [String: Any] = [
                 "userId": userId,
@@ -175,6 +182,9 @@ class PresenceService: ObservableObject {
                 .collection("typing")
                 .document(userId)
                 .setData(typingData, merge: true)
+
+            // Record typing indicator sent
+            await RateLimiter.shared.recordTypingIndicatorSent()
 
             print("⌨️ Started typing in conversation: \(conversationId)")
         } catch {

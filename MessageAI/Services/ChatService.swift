@@ -583,6 +583,12 @@ class ChatService: ObservableObject {
     // MARK: - Send Message
     
     func sendMessage(conversationId: String, senderId: String, text: String) async throws {
+        // Check rate limit
+        let rateLimitCheck = await RateLimiter.shared.canSendMessage()
+        guard rateLimitCheck.allowed else {
+            throw NSError(domain: "ChatService", code: 429, userInfo: [NSLocalizedDescriptionKey: rateLimitCheck.reason ?? "Rate limit exceeded"])
+        }
+
         let trimmedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
 
         // Validate message text
@@ -600,6 +606,9 @@ class ChatService: ObservableObject {
            !conversation.canSendMessage(senderId) {
             throw NSError(domain: "ChatService", code: 403, userInfo: [NSLocalizedDescriptionKey: "Only admins can send messages in this group"])
         }
+
+        // Record message sent for rate limiting
+        await RateLimiter.shared.recordMessageSent()
 
         let startTime = Date()
         print("📤 Sending message to conversation: \(conversationId)")
