@@ -29,6 +29,9 @@ struct Conversation: Identifiable, Codable, Hashable {
     // Unread tracking - maps userId to unread count
     var unreadCounts: [String: Int]?
 
+    // Message pinning
+    var pinnedMessageIds: [String]?
+
     init(
         id: String,
         type: ConversationType = .direct,

@@ -20,7 +20,8 @@ struct ChatListView: View {
     @State private var showDeleteError = false
     @State private var deleteErrorMessage = ""
     @State private var showPerformanceMonitor = false
-    
+    @State private var showProfile = false
+
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
@@ -88,10 +89,14 @@ struct ChatListView: View {
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
                     Menu {
+                        Button(action: { showProfile = true }) {
+                            Label("My Profile", systemImage: "person.circle")
+                        }
+
                         Button(action: { showLogoutConfirmation = true }) {
                             Label("Logout", systemImage: "rectangle.portrait.and.arrow.right")
                         }
-                        
+
                         Button(action: { showPerformanceMonitor = true }) {
                             Label("Performance Monitor", systemImage: "chart.xyaxis.line")
                         }
@@ -132,6 +137,13 @@ struct ChatListView: View {
             }
             .sheet(isPresented: $showPerformanceMonitor) {
                 PerformanceMonitorView()
+            }
+            .sheet(isPresented: $showProfile) {
+                if let currentUser = authService.currentUser {
+                    UserProfileView(user: currentUser)
+                        .environmentObject(authService)
+                        .environmentObject(chatService)
+                }
             }
             .navigationDestination(item: $selectedConversationId) { conversationId in
                 if let conversation = chatService.conversations.first(where: { $0.id == conversationId }) {

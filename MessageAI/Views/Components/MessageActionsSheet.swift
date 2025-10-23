@@ -10,11 +10,15 @@ import SwiftUI
 struct MessageActionsSheet: View {
     let message: Message
     let currentUserId: String
+    let isPinned: Bool
+    let canPin: Bool // true for direct chats or if user is admin in group
     let onEdit: () -> Void
     let onDelete: (Bool) -> Void // Bool = deleteForEveryone
     let onForward: () -> Void
+    let onPin: () -> Void
+    let onUnpin: () -> Void
     let onDismiss: () -> Void
-    
+
     @State private var showDeleteConfirmation = false
     @State private var showDeleteForEveryoneConfirmation = false
     
@@ -64,7 +68,24 @@ struct MessageActionsSheet: View {
                     }) {
                         Label("Forward", systemImage: "arrowshape.turn.up.right")
                     }
-                    
+
+                    // Pin/Unpin
+                    if canPin {
+                        if isPinned {
+                            Button(action: {
+                                onUnpin()
+                            }) {
+                                Label("Unpin Message", systemImage: "pin.slash")
+                            }
+                        } else {
+                            Button(action: {
+                                onPin()
+                            }) {
+                                Label("Pin Message", systemImage: "pin")
+                            }
+                        }
+                    }
+
                     // Reply (future feature)
                     Button(action: {
                         // TODO: Implement reply feature
@@ -192,6 +213,8 @@ struct MessageActionsSheet: View {
             createdAt: Date()
         ),
         currentUserId: "user1",
+        isPinned: false,
+        canPin: true,
         onEdit: {
             print("Edit tapped")
         },
@@ -200,6 +223,12 @@ struct MessageActionsSheet: View {
         },
         onForward: {
             print("Forward tapped")
+        },
+        onPin: {
+            print("Pin tapped")
+        },
+        onUnpin: {
+            print("Unpin tapped")
         },
         onDismiss: {
             print("Dismiss tapped")

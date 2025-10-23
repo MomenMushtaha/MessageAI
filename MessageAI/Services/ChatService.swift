@@ -1537,6 +1537,63 @@ class ChatService: ObservableObject {
         print("✅ Removed admin status from user \(userId)")
     }
 
+    // MARK: - Message Pinning
+
+    /// Pin a message in a conversation (limit: 3 pinned messages)
+    func pinMessage(conversationId: String, messageId: String, userId: String) async throws {
+        let conversationRef = db.collection("conversations").document(conversationId)
+
+        // Get conversation
+        let doc = try await conversationRef.getDocument()
+        guard let conversation = try? doc.data(as: Conversation.self) else {
+            throw NSError(domain: "ChatService", code: 404, userInfo: [NSLocalizedDescriptionKey: "Conversation not found"])
+        }
+
+        // Check permissions: direct chats = anyone, groups = admins only
+        if conversation.type == .group && !conversation.isAdmin(userId) {
+            throw NSError(domain: "ChatService", code: 403, userInfo: [NSLocalizedDescriptionKey: "Only admins can pin messages in groups"])
+        }
+
+        // Check pinned message limit
+        let pinnedIds = conversation.pinnedMessageIds ?? []
+        if pinnedIds.count >= 3 {
+            throw NSError(domain: "ChatService", code: 400, userInfo: [NSLocalizedDescriptionKey: "Maximum 3 pinned messages allowed"])
+        }
+
+        // Check if already pinned
+        if pinnedIds.contains(messageId) {
+            return
+        }
+
+        try await conversationRef.updateData([
+            "pinnedMessageIds": FieldValue.arrayUnion([messageId])
+        ])
+
+        print("✅ Message \(messageId) pinned")
+    }
+
+    /// Unpin a message in a conversation
+    func unpinMessage(conversationId: String, messageId: String, userId: String) async throws {
+        let conversationRef = db.collection("conversations").document(conversationId)
+
+        // Get conversation
+        let doc = try await conversationRef.getDocument()
+        guard let conversation = try? doc.data(as: Conversation.self) else {
+            throw NSError(domain: "ChatService", code: 404, userInfo: [NSLocalizedDescriptionKey: "Conversation not found"])
+        }
+
+        // Check permissions: direct chats = anyone, groups = admins only
+        if conversation.type == .group && !conversation.isAdmin(userId) {
+            throw NSError(domain: "ChatService", code: 403, userInfo: [NSLocalizedDescriptionKey: "Only admins can unpin messages in groups"])
+        }
+
+        try await conversationRef.updateData([
+            "pinnedMessageIds": FieldValue.arrayRemove([messageId])
+        ])
+
+        print("✅ Message \(messageId) unpinned")
+    }
+
     // MARK: - Sync Pending Messages
     
     func syncPendingMessages() async {

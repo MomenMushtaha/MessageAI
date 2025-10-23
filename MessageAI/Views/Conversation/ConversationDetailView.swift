@@ -69,6 +69,47 @@ struct ConversationDetailView: View {
                             if currentMessages.isEmpty {
                                 emptyMessagesView
                             } else {
+                                // Load More Messages Button
+                                if chatService.hasMoreMessages[conversation.id] == true {
+                                    if chatService.isLoadingMoreMessages[conversation.id] == true {
+                                        HStack {
+                                            Spacer()
+                                            ProgressView()
+                                                .padding()
+                                            Spacer()
+                                        }
+                                    } else {
+                                        Button(action: {
+                                            Task {
+                                                await chatService.loadOlderMessages(conversationId: conversation.id)
+                                            }
+                                        }) {
+                                            HStack {
+                                                Image(systemName: "arrow.up.circle")
+                                                Text("Load Earlier Messages")
+                                            }
+                                            .font(.subheadline)
+                                            .foregroundStyle(.blue)
+                                            .padding(.vertical, 8)
+                                            .padding(.horizontal, 16)
+                                            .background(Color(.systemGray6))
+                                            .cornerRadius(20)
+                                        }
+                                        .frame(maxWidth: .infinity)
+                                        .padding(.vertical, 8)
+                                    }
+                                } else if currentMessages.count >= 50 {
+                                    // Show "Beginning of conversation" only if we've loaded enough messages
+                                    HStack {
+                                        Spacer()
+                                        Text("Beginning of conversation")
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                            .padding(.vertical, 8)
+                                        Spacer()
+                                    }
+                                }
+
                                 ForEach(currentMessages) { message in
                                     MessageBubbleRow(
                                         message: message,
@@ -269,6 +310,8 @@ struct ConversationDetailView: View {
                 MessageActionsSheet(
                     message: message,
                     currentUserId: userId,
+                    isPinned: conversation.pinnedMessageIds?.contains(message.id) ?? false,
+                    canPin: conversation.type == .direct || conversation.isAdmin(userId),
                     onEdit: {
                         // Enter edit mode
                         editingMessageId = message.id
@@ -298,6 +341,36 @@ struct ConversationDetailView: View {
                         messageToForward = message
                         showMessageActions = false
                         showForwardSheet = true
+                    },
+                    onPin: {
+                        Task {
+                            do {
+                                try await chatService.pinMessage(
+                                    conversationId: conversation.id,
+                                    messageId: message.id,
+                                    userId: userId
+                                )
+                            } catch {
+                                errorMessage = error.localizedDescription
+                                showErrorAlert = true
+                            }
+                        }
+                        showMessageActions = false
+                    },
+                    onUnpin: {
+                        Task {
+                            do {
+                                try await chatService.unpinMessage(
+                                    conversationId: conversation.id,
+                                    messageId: message.id,
+                                    userId: userId
+                                )
+                            } catch {
+                                errorMessage = error.localizedDescription
+                                showErrorAlert = true
+                            }
+                        }
+                        showMessageActions = false
                     },
                     onDismiss: {
                         showMessageActions = false

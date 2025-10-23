@@ -148,7 +148,43 @@ class AuthService: ObservableObject {
             throw error
         }
     }
-    
+
+    // MARK: - Update Profile
+
+    func updateProfile(userId: String, displayName: String?, bio: String?) async throws {
+        var updateData: [String: Any] = [:]
+
+        if let displayName = displayName {
+            updateData["displayName"] = displayName
+        }
+
+        if let bio = bio {
+            updateData["bio"] = bio
+        }
+
+        guard !updateData.isEmpty else { return }
+
+        do {
+            try await db.collection("users").document(userId).updateData(updateData)
+
+            // Update local currentUser
+            if var user = currentUser {
+                if let displayName = displayName {
+                    user.displayName = displayName
+                }
+                if let bio = bio {
+                    user.bio = bio
+                }
+                currentUser = user
+            }
+
+            print("✅ Profile updated successfully")
+        } catch {
+            print("❌ Error updating profile: \(error.localizedDescription)")
+            throw error
+        }
+    }
+
     // MARK: - Firestore Operations
     
     private func createUserDocument(user: User) async throws {
@@ -183,6 +219,7 @@ class AuthService: ObservableObject {
                     displayName: data["displayName"] as? String ?? "Unknown",
                     email: data["email"] as? String ?? "",
                     avatarURL: data["avatarURL"] as? String,
+                    bio: data["bio"] as? String,
                     createdAt: (data["createdAt"] as? Timestamp)?.dateValue() ?? Date(),
                     isOnline: data["isOnline"] as? Bool ?? false,
                     lastSeen: (data["lastSeen"] as? Timestamp)?.dateValue()

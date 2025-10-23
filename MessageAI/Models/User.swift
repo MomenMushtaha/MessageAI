@@ -12,15 +12,17 @@ struct User: Identifiable, Codable, Hashable {
     var displayName: String
     var email: String
     var avatarURL: String?
+    var bio: String?
     var createdAt: Date
     var isOnline: Bool
     var lastSeen: Date?
-    
-    init(id: String, displayName: String, email: String, avatarURL: String? = nil, createdAt: Date = Date(), isOnline: Bool = false, lastSeen: Date? = nil) {
+
+    init(id: String, displayName: String, email: String, avatarURL: String? = nil, bio: String? = nil, createdAt: Date = Date(), isOnline: Bool = false, lastSeen: Date? = nil) {
         self.id = id
         self.displayName = displayName
         self.email = email
         self.avatarURL = avatarURL
+        self.bio = bio
         self.createdAt = createdAt
         self.isOnline = isOnline
         self.lastSeen = lastSeen
