@@ -1096,18 +1096,33 @@ struct MessageBubbleRow: View, Equatable {
                 
                 // Message bubble
                 HStack(alignment: .bottom, spacing: 4) {
-                    Text(message.text)
-                        .font(.body)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 8)
-                        .background(
-                            bubbleBackground
+                    // Check if this is an image message
+                    if message.mediaType == "image" {
+                        ImageMessageView(
+                            message: message,
+                            isFromCurrentUser: isFromCurrentUser,
+                            onTap: {
+                                // TODO: Show full-screen image viewer
+                                print("Image tapped: \(message.id)")
+                            }
                         )
-                        .foregroundStyle(isSearchResult && isFromCurrentUser ? .black : (isFromCurrentUser ? .white : .primary))
-                        .clipShape(BubbleShape(isFromCurrentUser: isFromCurrentUser))
                         .onTapGesture(count: 2) {
                             onReactionTap()
                         }
+                    } else {
+                        Text(message.text)
+                            .font(.body)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 8)
+                            .background(
+                                bubbleBackground
+                            )
+                            .foregroundStyle(isSearchResult && isFromCurrentUser ? .black : (isFromCurrentUser ? .white : .primary))
+                            .clipShape(BubbleShape(isFromCurrentUser: isFromCurrentUser))
+                            .onTapGesture(count: 2) {
+                                onReactionTap()
+                            }
+                    }
                     
                     // Timestamp and status in the corner
                     if isFromCurrentUser {
