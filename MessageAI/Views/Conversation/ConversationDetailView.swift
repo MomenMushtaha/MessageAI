@@ -427,6 +427,12 @@ struct ConversationDetailView: View {
                         }
                         showMessageActions = false
                     },
+                    onReact: {
+                        // Show reaction picker
+                        reactionPickerMessageId = message.id
+                        showMessageActions = false
+                        showReactionPicker = true
+                    },
                     onDismiss: {
                         showMessageActions = false
                     }
@@ -1483,26 +1489,17 @@ struct MessageBubbleRow: View, Equatable {
                             isFromCurrentUser: isFromCurrentUser,
                             onTap: onImageTap
                         )
-                        .onTapGesture(count: 2) {
-                            onReactionTap()
-                        }
                     } else if message.mediaType == "audio" {
                         AudioMessageView(
                             message: message,
                             isFromCurrentUser: isFromCurrentUser
                         )
-                        .onTapGesture(count: 2) {
-                            onReactionTap()
-                        }
                     } else if message.mediaType == "video" {
                         VideoMessageView(
                             message: message,
                             isFromCurrentUser: isFromCurrentUser,
                             onTap: onVideoTap
                         )
-                        .onTapGesture(count: 2) {
-                            onReactionTap()
-                        }
                     } else {
                         Text(message.text)
                             .font(.body)
@@ -1513,9 +1510,6 @@ struct MessageBubbleRow: View, Equatable {
                             )
                             .foregroundStyle(isSearchResult && isFromCurrentUser ? .black : (isFromCurrentUser ? .white : .primary))
                             .clipShape(BubbleShape(isFromCurrentUser: isFromCurrentUser))
-                            .onTapGesture(count: 2) {
-                                onReactionTap()
-                            }
                     }
                     
                     // Timestamp and status in the corner
@@ -1623,7 +1617,24 @@ struct MessageBubbleRow: View, Equatable {
                     .padding(.vertical, 2)
                     .background(Color(.systemGray6))
                     .cornerRadius(10)
+                    .onTapGesture {
+                        // Tap on reaction to add/remove your reaction
+                        onReactionTap()
+                    }
                 }
+            }
+
+            // Add reaction button
+            Button(action: {
+                onReactionTap()
+            }) {
+                Image(systemName: "face.smiling")
+                    .font(.system(size: 12))
+                    .foregroundColor(.secondary)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Color(.systemGray6))
+                    .cornerRadius(10)
             }
         }
     }

@@ -17,6 +17,7 @@ struct MessageActionsSheet: View {
     let onForward: () -> Void
     let onPin: () -> Void
     let onUnpin: () -> Void
+    let onReact: () -> Void
     let onDismiss: () -> Void
 
     @State private var showDeleteConfirmation = false
@@ -50,18 +51,25 @@ struct MessageActionsSheet: View {
                 
                 // Actions Section
                 Section {
+                    // React
+                    Button(action: {
+                        onReact()
+                    }) {
+                        Label("React", systemImage: "face.smiling")
+                    }
+
                     // Copy
                     Button(action: {
                         UIPasteboard.general.string = message.text
                         onDismiss()
-                        
+
                         // Show haptic feedback
                         let generator = UINotificationFeedbackGenerator()
                         generator.notificationOccurred(.success)
                     }) {
                         Label("Copy", systemImage: "doc.on.doc")
                     }
-                    
+
                     // Forward
                     Button(action: {
                         onForward()
@@ -229,6 +237,9 @@ struct MessageActionsSheet: View {
         },
         onUnpin: {
             print("Unpin tapped")
+        },
+        onReact: {
+            print("React tapped")
         },
         onDismiss: {
             print("Dismiss tapped")
