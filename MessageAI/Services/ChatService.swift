@@ -669,7 +669,10 @@ class ChatService: ObservableObject {
         batch.updateData(conversationUpdate, forDocument: conversationRef)
         
         do {
-            try await batch.commit()
+            // Use retry logic for the batch commit
+            try await ErrorRecoveryService.shared.retryWithExponentialBackoff {
+                try await batch.commit()
+            }
             let duration = Date().timeIntervalSince(startTime)
             print("✅ Message sent to Firestore in \(Int(duration * 1000))ms")
             
@@ -1363,38 +1366,45 @@ class ChatService: ObservableObject {
             .document(messageId)
 
         do {
-            if deleteForEveryone {
-                print("🗑️ Deleting message \(messageId) for everyone")
+            // Use retry logic with rollback on failure
+            try await ErrorRecoveryService.shared.executeWithRollback(
+                operation: {
+                    if deleteForEveryone {
+                        print("🗑️ Deleting message \(messageId) for everyone")
 
-                try await messageRef.updateData([
-                    "text": "[Message deleted]",
-                    "deletedForEveryone": true,
-                    "deletedBy": FieldValue.arrayUnion([currentUserId])
-                ])
+                        try await messageRef.updateData([
+                            "text": "[Message deleted]",
+                            "deletedForEveryone": true,
+                            "deletedBy": FieldValue.arrayUnion([currentUserId])
+                        ])
 
-                print("✅ Message deleted for everyone - confirmed by server")
-            } else {
-                print("🗑️ Marking message \(messageId) as deleted for user \(currentUserId)")
+                                print("✅ Message deleted for everyone - confirmed by server")
+                    } else {
+                        print("🗑️ Marking message \(messageId) as deleted for user \(currentUserId)")
 
-                try await messageRef.updateData([
-                    "deletedBy": FieldValue.arrayUnion([currentUserId])
-                ])
+                        try await messageRef.updateData([
+                            "deletedBy": FieldValue.arrayUnion([currentUserId])
+                        ])
 
-                print("✅ Message marked as deleted for current user - confirmed by server")
-            }
+                        print("✅ Message marked as deleted for current user - confirmed by server")
+                    }
+                },
+                rollback: {
+                    // Rollback: Restore original message on failure
+                    print("❌ Deletion failed, executing rollback")
+
+                    guard var messages = self.messages[conversationId],
+                          let index = messages.firstIndex(where: { $0.id == messageId }) else {
+                        return
+                    }
+
+                    messages[index] = originalMessage
+                    self.messages[conversationId] = messages
+                }
+            )
 
         } catch {
-            // ROLLBACK: Restore original message on failure
-            print("❌ Deletion failed, rolling back to original state")
-
-            guard var messages = messages[conversationId],
-                  let index = messages.firstIndex(where: { $0.id == messageId }) else {
-                throw error
-            }
-
-            messages[index] = originalMessage
-            self.messages[conversationId] = messages
-
+            // Error already logged and rolled back by executeWithRollback
             throw error
         }
     }
