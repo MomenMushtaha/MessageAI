@@ -700,7 +700,155 @@ class ChatService: ObservableObject {
             throw error
         }
     }
-    
+
+    // MARK: - Send Image Message
+
+    /// Send an image message with upload progress
+    func sendImageMessage(
+        conversationId: String,
+        senderId: String,
+        image: UIImage,
+        progressHandler: ((Double) -> Void)? = nil
+    ) async throws {
+        let startTime = Date()
+        print("📷 Sending image message to conversation: \(conversationId)")
+
+        // Generate message ID upfront
+        let messageId = UUID().uuidString
+        let createdAt = Date()
+
+        // Start performance tracking
+        await PerformanceMonitor.shared.startMessageSend(messageId: messageId)
+
+        // Create local message immediately (optimistic UI)
+        let localMessage = Message(
+            id: messageId,
+            conversationId: conversationId,
+            senderId: senderId,
+            text: "",
+            createdAt: createdAt,
+            status: "sending",
+            mediaType: "image"
+        )
+
+        // Update UI immediately (optimistic update)
+        var currentMessages = messages[conversationId] ?? []
+        currentMessages.append(localMessage)
+        messages[conversationId] = currentMessages
+        messageCache[conversationId] = currentMessages
+        lastMessageCount[conversationId] = currentMessages.count
+
+        // Save to local storage
+        Task.detached(priority: .userInitiated) {
+            try? await LocalStorageService.shared.saveMessage(localMessage, status: "sending", isSynced: false)
+        }
+
+        do {
+            // Upload image to Firebase Storage
+            print("📤 Uploading image to Storage...")
+            let (fullURL, thumbnailURL) = try await MediaService.shared.uploadImage(
+                image,
+                conversationId: conversationId,
+                messageId: messageId,
+                progressHandler: progressHandler
+            )
+
+            print("✅ Image uploaded: \(thumbnailURL)")
+
+            // Prepare Firestore data with media URLs
+            let messageData: [String: Any] = [
+                "senderId": senderId,
+                "text": "",
+                "createdAt": FieldValue.serverTimestamp(),
+                "status": "sent",
+                "deliveredTo": [],
+                "readBy": [],
+                "mediaType": "image",
+                "mediaURL": fullURL,
+                "thumbnailURL": thumbnailURL
+            ]
+
+            let conversationRef = db.collection("conversations").document(conversationId)
+            let messageRef = conversationRef.collection("messages").document(messageId)
+
+            // Use batch write
+            let batch = db.batch()
+
+            // Add message
+            batch.setData(messageData, forDocument: messageRef)
+
+            // Update conversation's last message
+            let conversationUpdate: [String: Any] = [
+                "lastMessageText": "📷 Image",
+                "lastMessageAt": FieldValue.serverTimestamp()
+            ]
+            batch.updateData(conversationUpdate, forDocument: conversationRef)
+
+            try await batch.commit()
+            let duration = Date().timeIntervalSince(startTime)
+            print("✅ Image message sent to Firestore in \(Int(duration * 1000))ms")
+
+            // Complete performance tracking
+            await PerformanceMonitor.shared.completeMessageSend(messageId: messageId, success: true)
+
+            // Update local status
+            Task.detached(priority: .background) {
+                try? await LocalStorageService.shared.updateMessageStatus(messageId, status: "sent", isSynced: true)
+            }
+
+            // Update message in UI with URLs
+            await MainActor.run {
+                if var currentMessages = self.messages[conversationId],
+                   let index = currentMessages.firstIndex(where: { $0.id == messageId }) {
+                    currentMessages[index] = Message(
+                        id: messageId,
+                        conversationId: conversationId,
+                        senderId: senderId,
+                        text: "",
+                        createdAt: createdAt,
+                        status: "sent",
+                        mediaType: "image",
+                        mediaURL: fullURL,
+                        thumbnailURL: thumbnailURL
+                    )
+                    self.messages[conversationId] = currentMessages
+                    self.messageCache[conversationId] = currentMessages
+                }
+            }
+
+        } catch {
+            print("❌ Error sending image message: \(error.localizedDescription)")
+
+            // Complete performance tracking (failure)
+            await PerformanceMonitor.shared.completeMessageSend(messageId: messageId, success: false)
+
+            // Update local status to error
+            Task.detached(priority: .background) {
+                try? await LocalStorageService.shared.updateMessageStatus(messageId, status: "error", isSynced: false)
+            }
+
+            // Update UI to show error
+            await MainActor.run {
+                if var currentMessages = self.messages[conversationId],
+                   let index = currentMessages.firstIndex(where: { $0.id == messageId }) {
+                    currentMessages[index] = Message(
+                        id: messageId,
+                        conversationId: conversationId,
+                        senderId: senderId,
+                        text: "",
+                        createdAt: createdAt,
+                        status: "error",
+                        mediaType: "image"
+                    )
+                    self.messages[conversationId] = currentMessages
+                    self.messageCache[conversationId] = currentMessages
+                }
+            }
+
+            throw error
+        }
+    }
+
     // MARK: - Create Conversation
     
     func createOrGetConversation(participantIds: [String], type: ConversationType = .direct, groupName: String? = nil) async throws -> String {
