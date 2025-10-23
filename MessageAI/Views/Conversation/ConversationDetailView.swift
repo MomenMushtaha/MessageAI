@@ -64,12 +64,44 @@ struct ConversationDetailView: View {
         return conversation.canSendMessage(currentUserId)
     }
 
+    // Computed property to get pinned messages
+    private var pinnedMessages: [Message] {
+        guard let pinnedIds = conversation.pinnedMessageIds else { return [] }
+        let allMessages = chatService.messages[conversation.id] ?? []
+        return pinnedIds.compactMap { pinnedId in
+            allMessages.first(where: { $0.id == pinnedId })
+        }
+    }
+
+    // Check if user can pin/unpin messages
+    private var canPinMessages: Bool {
+        guard let currentUserId = authService.currentUser?.id else { return false }
+        if conversation.type == .group {
+            return conversation.isAdmin(currentUserId)
+        }
+        return true
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             // Search bar (appears when searching)
             if isSearching {
                 searchBar
             }
+
+            // Pinned Messages (if any)
+            PinnedMessagesView(
+                pinnedMessages: pinnedMessages,
+                onTapMessage: { message in
+                    scrollToMessage(messageId: message.id)
+                },
+                onUnpin: { message in
+                    Task {
+                        await unpinMessage(message)
+                    }
+                },
+                canUnpin: canPinMessages
+            )
 
             // Messages List
             ZStack(alignment: .bottomTrailing) {
@@ -1343,7 +1375,37 @@ struct ConversationDetailView: View {
     private func scrollToBottomAnimated(proxy: ScrollViewProxy) {
         scrollToBottom(proxy: proxy, animated: true)
     }
-    
+
+    private func scrollToMessage(messageId: String) {
+        guard let proxy = scrollProxy else { return }
+
+        withAnimation(.easeInOut(duration: 0.3)) {
+            proxy.scrollTo(messageId, anchor: .center)
+        }
+
+        // Briefly highlight the message (optional visual feedback)
+        // This could be implemented with a state variable if needed
+    }
+
+    // MARK: - Message Pinning
+
+    private func unpinMessage(_ message: Message) async {
+        guard let currentUserId = authService.currentUser?.id else { return }
+
+        do {
+            try await chatService.unpinMessage(
+                conversationId: conversation.id,
+                messageId: message.id,
+                userId: currentUserId
+            )
+        } catch {
+            await MainActor.run {
+                errorMessage = error.localizedDescription
+                showErrorAlert = true
+            }
+        }
+    }
+
     private func clearChatHistory() async {
         do {
             try await chatService.clearChatHistory(conversationId: conversation.id)
