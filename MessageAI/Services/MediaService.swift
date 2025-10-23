@@ -7,15 +7,13 @@
 
 import Foundation
 import UIKit
-
-// TODO: Add FirebaseStorage to project dependencies
-// import FirebaseStorage
+import FirebaseStorage
 
 @MainActor
 class MediaService {
     static let shared = MediaService()
 
-    // private let storage = Storage.storage() // TODO: Enable when FirebaseStorage added
+    private let storage = Storage.storage()
     private let imageCache = NSCache<NSString, UIImage>()
 
     private init() {
@@ -50,13 +48,6 @@ class MediaService {
             throw MediaError.compressionFailed
         }
 
-        // TODO: Implement Firebase Storage upload
-        // This is a placeholder implementation
-        // When FirebaseStorage is added, uncomment the actual upload code
-
-        throw MediaError.uploadFailed // Placeholder until Firebase Storage is configured
-
-        /* TODO: Uncomment when FirebaseStorage is added
         let storageRef = storage.reference()
         let fullImagePath = "conversations/\(conversationId)/media/\(messageId)/full.jpg"
         let thumbnailPath = "conversations/\(conversationId)/media/\(messageId)/thumb.jpg"
@@ -68,23 +59,30 @@ class MediaService {
         let metadata = StorageMetadata()
         metadata.contentType = "image/jpeg"
 
-        let _ = try await fullImageRef.putDataAsync(fullImageData, metadata: metadata) { progress in
-            if let progress = progress {
+        let uploadTask = fullImageRef.putData(fullImageData, metadata: metadata)
+
+        // Observe upload progress
+        uploadTask.observe(.progress) { snapshot in
+            if let progress = snapshot.progress {
                 let percentComplete = Double(progress.completedUnitCount) / Double(progress.totalUnitCount)
-                progressHandler?(percentComplete)
+                Task { @MainActor in
+                    progressHandler?(percentComplete)
+                }
             }
         }
 
+        // Wait for upload to complete
+        _ = try await uploadTask
+
         // Upload thumbnail
-        let _ = try await thumbnailRef.putDataAsync(thumbnailData, metadata: metadata)
+        _ = try await thumbnailRef.putData(thumbnailData, metadata: metadata)
 
         // Get download URLs
         let fullURL = try await fullImageRef.downloadURL().absoluteString
         let thumbnailURL = try await thumbnailRef.downloadURL().absoluteString
-        */
 
-        // Placeholder return - remove when actual upload is implemented
-        // return (fullURL, thumbnailURL)
+        print("✅ Image uploaded successfully")
+        return (fullURL, thumbnailURL)
     }
 
     // MARK: - Image Compression

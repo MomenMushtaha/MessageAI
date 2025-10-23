@@ -11,7 +11,6 @@
 		A52EBF602EA85C3D008D65D8 /* FirebaseFirestore in Frameworks */ = {isa = PBXBuildFile; productRef = A5FB00022EA8300000000002 /* FirebaseFirestore */; };
 		A52EBF612EA85C3D008D65D8 /* FirebaseMessaging in Frameworks */ = {isa = PBXBuildFile; productRef = A5FB00042EA8300000000004 /* FirebaseMessaging */; };
 		A52EBF622EA85C3D008D65D8 /* FirebaseAnalytics in Frameworks */ = {isa = PBXBuildFile; productRef = A5FB00052EA8300000000005 /* FirebaseAnalytics */; };
-		A52EBF632EA85C3D008D65D8 /* FirebaseStorage in Frameworks */ = {isa = PBXBuildFile; productRef = A5FB00062EA8300000000006 /* FirebaseStorage */; };
 		A5B11FA02EA82D640048396F /* README.md in Resources */ = {isa = PBXBuildFile; fileRef = A5B11F9F2EA82D640048396F /* README.md */; };
 		A5B11FA22EA82D6B0048396F /* .gitignore in Resources */ = {isa = PBXBuildFile; fileRef = A5B11FA12EA82D6B0048396F /* .gitignore */; };
 		A5CC52EE2EA8A03B00F477BD /* HapticService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A5CC52ED2EA8A03B00F477BD /* HapticService.swift */; };
@@ -67,7 +66,6 @@
 			buildActionMask = 2147483647;
 			files = (
 				A52EBF622EA85C3D008D65D8 /* FirebaseAnalytics in Frameworks */,
-				A52EBF632EA85C3D008D65D8 /* FirebaseStorage in Frameworks */,
 				A52EBF612EA85C3D008D65D8 /* FirebaseMessaging in Frameworks */,
 				A52EBF602EA85C3D008D65D8 /* FirebaseFirestore in Frameworks */,
 				A52EBF5F2EA85C3D008D65D8 /* FirebaseAuth in Frameworks */,
@@ -138,7 +136,6 @@
 				A5FB00022EA8300000000002 /* FirebaseFirestore */,
 				A5FB00042EA8300000000004 /* FirebaseMessaging */,
 				A5FB00052EA8300000000005 /* FirebaseAnalytics */,
-				A5FB00062EA8300000000006 /* FirebaseStorage */,
 			);
 			productName = MessageAI;
 			productReference = A5B11F672EA829030048396F /* MessageAI.app */;
@@ -645,11 +642,6 @@
 			isa = XCSwiftPackageProductDependency;
 			package = A5FB00002EA8300000000000 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
 			productName = FirebaseAnalytics;
-		};
-		A5FB00062EA8300000000006 /* FirebaseStorage */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = A5FB00002EA8300000000000 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
-			productName = FirebaseStorage;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};
