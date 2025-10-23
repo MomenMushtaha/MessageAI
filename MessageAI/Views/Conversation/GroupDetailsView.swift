@@ -186,6 +186,7 @@ struct GroupSettingsView: View {
                             isAdmin: conversation.isAdmin(participantId),
                             isCurrentUserAdmin: isCurrentUserAdmin,
                             isCurrentUser: participantId == authService.currentUser?.id,
+                            joinDate: conversation.joinDate(for: participantId),
                             onMakeAdmin: {
                                 Task {
                                     await makeAdmin(userId: participantId)
@@ -313,19 +314,58 @@ struct GroupSettingsView: View {
 
     // MARK: - Actions
 
+    private func handleAvatarSelection(_ item: PhotosPickerItem?) async {
+        guard let item = item else { return }
+
+        do {
+            guard let imageData = try await item.loadTransferable(type: Data.self),
+                  let image = UIImage(data: imageData) else {
+                await MainActor.run {
+                    errorMessage = "Failed to load image"
+                    showErrorAlert = true
+                }
+                return
+            }
+
+            await MainActor.run {
+                groupAvatarImage = image
+            }
+
+        } catch {
+            await MainActor.run {
+                errorMessage = "Failed to load image: \(error.localizedDescription)"
+                showErrorAlert = true
+            }
+        }
+    }
+
     private func saveGroupInfo() async {
         guard let currentUserId = authService.currentUser?.id else { return }
 
         isSaving = true
-        defer { isSaving = false }
+        defer {
+            isSaving = false
+            groupAvatarImage = nil // Clear the edited avatar after save
+        }
 
         do {
+            // Update group name and description
             try await chatService.updateGroupInfo(
                 conversationId: conversation.id,
                 groupName: editedGroupName.isEmpty ? nil : editedGroupName,
                 groupDescription: editedGroupDescription.isEmpty ? nil : editedGroupDescription,
                 adminId: currentUserId
             )
+
+            // Upload avatar if changed
+            if let avatarImage = groupAvatarImage {
+                try await chatService.updateGroupAvatar(
+                    conversationId: conversation.id,
+                    image: avatarImage,
+                    adminId: currentUserId
+                )
+            }
+
             isEditing = false
         } catch {
             errorMessage = error.localizedDescription
@@ -414,6 +454,7 @@ struct ParticipantRow: View {
     let isAdmin: Bool
     let isCurrentUserAdmin: Bool
     let isCurrentUser: Bool
+    let joinDate: Date?
     let onMakeAdmin: () -> Void
     let onRemoveAdmin: () -> Void
     let onRemoveParticipant: () -> Void
@@ -466,6 +507,12 @@ struct ParticipantRow: View {
                                 .font(.caption)
                                 .foregroundStyle(.blue)
                         }
+                    }
+
+                    if let joinDate = joinDate {
+                        Text("Joined \(joinDate.formatted(date: .abbreviated, time: .omitted))")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
                     }
                 }
 
