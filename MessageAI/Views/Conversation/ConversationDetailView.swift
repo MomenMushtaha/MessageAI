@@ -7,15 +7,19 @@
 
 import SwiftUI
 import FirebaseFirestore
+import PhotosUI
 
 struct ConversationDetailView: View {
     let conversation: Conversation
     let otherUser: User?
-    
+
     @EnvironmentObject var authService: AuthService
     @EnvironmentObject var chatService: ChatService
     @State private var messageText = ""
     @State private var isSending = false
+    @State private var selectedPhotoItem: PhotosPickerItem? // Selected photo from picker
+    @State private var isUploadingImage = false // Image upload in progress
+    @State private var uploadProgress: Double = 0.0 // Upload progress (0.0 to 1.0)
     @State private var participantUsers: [String: User] = [:] // userId -> User cache
     @State private var showParticipantList = false
     @State private var otherUserPresence: (isOnline: Bool, lastSeen: Date?) = (false, nil)
@@ -394,6 +398,17 @@ struct ConversationDetailView: View {
             }
             
             HStack(spacing: 12) {
+                // Photo Picker Button
+                PhotosPicker(selection: $selectedPhotoItem, matching: .images) {
+                    Image(systemName: "photo")
+                        .font(.system(size: 22))
+                        .foregroundStyle(.blue)
+                }
+                .disabled(isUploadingImage || isSending)
+                .onChange(of: selectedPhotoItem) { _, newItem in
+                    handlePhotoSelection(newItem)
+                }
+
                 // Text Field
                 HStack {
                     TextField("Message", text: $messageText, axis: .vertical)
@@ -929,7 +944,87 @@ struct ConversationDetailView: View {
         
         isSending = false
     }
-    
+
+    // MARK: - Photo Handling
+
+    private func handlePhotoSelection(_ item: PhotosPickerItem?) {
+        guard let item = item else { return }
+
+        Task {
+            do {
+                // Load the image data
+                guard let imageData = try await item.loadTransferable(type: Data.self),
+                      let image = UIImage(data: imageData) else {
+                    await MainActor.run {
+                        errorMessage = "Failed to load image"
+                        showErrorAlert = true
+                    }
+                    return
+                }
+
+                await sendImageMessage(image: image)
+
+            } catch {
+                await MainActor.run {
+                    errorMessage = "Failed to load image: \(error.localizedDescription)"
+                    showErrorAlert = true
+                }
+            }
+
+            // Clear selection after processing
+            await MainActor.run {
+                selectedPhotoItem = nil
+            }
+        }
+    }
+
+    private func sendImageMessage(image: UIImage) async {
+        guard let currentUserId = authService.currentUser?.id else {
+            return
+        }
+
+        isUploadingImage = true
+        uploadProgress = 0.0
+
+        // Stop typing indicator when sending image
+        if isCurrentUserTyping {
+            stopTypingIndicator(userId: currentUserId)
+        }
+
+        // Ensure auto-scroll for user's own messages
+        shouldAutoScroll = true
+
+        do {
+            try await chatService.sendImageMessage(
+                conversationId: conversation.id,
+                senderId: currentUserId,
+                image: image,
+                progressHandler: { progress in
+                    Task { @MainActor in
+                        self.uploadProgress = progress
+                    }
+                }
+            )
+
+            // Scroll to bottom after sending
+            if let proxy = scrollProxy {
+                scrollToBottomAnimated(proxy: proxy)
+            }
+
+            print("✅ Image message sent successfully")
+
+        } catch {
+            print("❌ Error sending image message: \(error.localizedDescription)")
+            await MainActor.run {
+                errorMessage = "Failed to send image: \(error.localizedDescription)"
+                showErrorAlert = true
+            }
+        }
+
+        isUploadingImage = false
+        uploadProgress = 0.0
+    }
+
     // MARK: - Scroll Helpers
     
     private func scrollToBottom(proxy: ScrollViewProxy, animated: Bool = true) {
