@@ -324,3 +324,17 @@ enum AuthError: LocalizedError {
     }
 }
 
+#if DEBUG
+extension AuthService {
+    /// Reset singleton state to provide a clean slate for integration tests.
+    func resetForTesting() {
+        if auth.currentUser != nil {
+            try? auth.signOut()
+        }
+        
+        currentUser = nil
+        isAuthenticated = false
+        errorMessage = nil
+    }
+}
+#endif

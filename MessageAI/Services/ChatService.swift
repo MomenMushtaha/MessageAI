@@ -1472,3 +1472,29 @@ extension Message {
     }
 }
 
+#if DEBUG
+extension ChatService {
+    /// Clear in-memory state and cancel listeners so each integration test starts fresh.
+    func resetForTesting() {
+        conversationsListener?.remove()
+        conversationsListener = nil
+        
+        messageListeners.values.forEach { $0.remove() }
+        messageListeners.removeAll()
+        
+        conversationUpdateTask?.cancel()
+        conversationUpdateTask = nil
+        
+        messageUpdateTasks.values.forEach { $0.cancel() }
+        messageUpdateTasks.removeAll()
+        
+        conversations.removeAll()
+        messages.removeAll()
+        allUsers.removeAll()
+        messageCache.removeAll()
+        lastMessageCount.removeAll()
+        isLoadingMoreMessages.removeAll()
+        hasMoreMessages.removeAll()
+    }
+}
+#endif
