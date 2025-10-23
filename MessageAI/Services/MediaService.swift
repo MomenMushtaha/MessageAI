@@ -8,6 +8,7 @@
 import Foundation
 import UIKit
 import FirebaseStorage
+import AVFoundation
 
 @MainActor
 class MediaService {
@@ -141,6 +142,115 @@ class MediaService {
         print("🗑️ Image cache cleared")
     }
 
+    // MARK: - Video Upload
+
+    /// Upload a video to Firebase Storage with thumbnail generation
+    /// - Parameters:
+    ///   - videoURL: URL to the video file
+    ///   - conversationId: Conversation ID
+    ///   - messageId: Message ID
+    ///   - progressHandler: Optional progress callback (0.0 to 1.0)
+    /// - Returns: Tuple of (videoURL, thumbnailURL, duration)
+    func uploadVideo(
+        _ videoURL: URL,
+        conversationId: String,
+        messageId: String,
+        progressHandler: ((Double) -> Void)? = nil
+    ) async throws -> (videoURL: String, thumbnailURL: String, duration: TimeInterval) {
+        print("📤 Starting video upload for message: \(messageId)")
+
+        // Get video duration
+        let asset = AVAsset(url: videoURL)
+        let duration = try await asset.load(.duration).seconds
+
+        // Generate thumbnail from first frame
+        guard let thumbnail = try await generateVideoThumbnail(from: videoURL) else {
+            throw MediaError.compressionFailed
+        }
+
+        // Compress thumbnail
+        guard let thumbnailData = compressImage(thumbnail, maxDimension: 200, quality: 0.7) else {
+            throw MediaError.compressionFailed
+        }
+
+        // Read video data
+        let videoData = try Data(contentsOf: videoURL)
+
+        // Check video size (max 50MB)
+        let maxSize = 50 * 1024 * 1024
+        guard videoData.count <= maxSize else {
+            throw MediaError.videoTooLarge
+        }
+
+        let storageRef = storage.reference()
+        let videoPath = "conversations/\(conversationId)/media/\(messageId)/video.mp4"
+        let thumbnailPath = "conversations/\(conversationId)/media/\(messageId)/video_thumb.jpg"
+
+        let videoRef = storageRef.child(videoPath)
+        let thumbnailRef = storageRef.child(thumbnailPath)
+
+        // Set video metadata
+        let videoMetadata = StorageMetadata()
+        videoMetadata.contentType = "video/mp4"
+        videoMetadata.customMetadata = [
+            "duration": String(duration),
+            "messageId": messageId
+        ]
+
+        // Upload video with progress tracking
+        let uploadTask = videoRef.putData(videoData, metadata: videoMetadata)
+
+        uploadTask.observe(.progress) { snapshot in
+            if let progress = snapshot.progress {
+                let percentComplete = Double(progress.completedUnitCount) / Double(progress.totalUnitCount)
+                Task { @MainActor in
+                    progressHandler?(percentComplete)
+                }
+            }
+        }
+
+        _ = try await uploadTask
+
+        // Upload thumbnail
+        let thumbnailMetadata = StorageMetadata()
+        thumbnailMetadata.contentType = "image/jpeg"
+        _ = try await thumbnailRef.putData(thumbnailData, metadata: thumbnailMetadata)
+
+        // Get download URLs
+        let videoDownloadURL = try await videoRef.downloadURL().absoluteString
+        let thumbnailDownloadURL = try await thumbnailRef.downloadURL().absoluteString
+
+        print("✅ Video uploaded successfully: \(videoDownloadURL)")
+        return (videoDownloadURL, thumbnailDownloadURL, duration)
+    }
+
+    /// Generate a thumbnail image from the first frame of a video
+    private func generateVideoThumbnail(from url: URL) async throws -> UIImage? {
+        let asset = AVAsset(url: url)
+        let imageGenerator = AVAssetImageGenerator(asset: asset)
+        imageGenerator.appliesPreferredTrackTransform = true
+        imageGenerator.maximumSize = CGSize(width: 400, height: 400)
+
+        let time = CMTime(seconds: 0, preferredTimescale: 600)
+
+        return try await withCheckedThrowingContinuation { continuation in
+            imageGenerator.generateCGImageAsynchronously(for: time) { cgImage, _, error in
+                if let error = error {
+                    continuation.resume(throwing: error)
+                    return
+                }
+
+                guard let cgImage = cgImage else {
+                    continuation.resume(returning: nil)
+                    return
+                }
+
+                let uiImage = UIImage(cgImage: cgImage)
+                continuation.resume(returning: uiImage)
+            }
+        }
+    }
+
     // MARK: - Audio Upload
 
     /// Upload an audio file to Firebase Storage
@@ -207,6 +317,7 @@ enum MediaError: LocalizedError {
     case invalidURL
     case invalidImageData
     case uploadFailed
+    case videoTooLarge
 
     var errorDescription: String? {
         switch self {
@@ -218,6 +329,8 @@ enum MediaError: LocalizedError {
             return "Invalid image data"
         case .uploadFailed:
             return "Failed to upload media"
+        case .videoTooLarge:
+            return "Video file is too large (max 50MB)"
         }
     }
 }

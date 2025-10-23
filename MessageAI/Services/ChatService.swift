@@ -849,6 +849,156 @@ class ChatService: ObservableObject {
         }
     }
 
+    // MARK: - Send Video Message
+
+    /// Send a video message with upload progress
+    func sendVideoMessage(
+        conversationId: String,
+        senderId: String,
+        videoURL: URL,
+        progressHandler: ((Double) -> Void)? = nil
+    ) async throws {
+        let startTime = Date()
+        print("🎥 Sending video message to conversation: \(conversationId)")
+
+        // Generate message ID upfront
+        let messageId = UUID().uuidString
+        let createdAt = Date()
+
+        // Start performance tracking
+        await PerformanceMonitor.shared.startMessageSend(messageId: messageId)
+
+        // Create local message immediately (optimistic UI)
+        let localMessage = Message(
+            id: messageId,
+            conversationId: conversationId,
+            senderId: senderId,
+            text: "",
+            createdAt: createdAt,
+            status: "sending",
+            mediaType: "video"
+        )
+
+        // Update UI immediately (optimistic update)
+        var currentMessages = messages[conversationId] ?? []
+        currentMessages.append(localMessage)
+        messages[conversationId] = currentMessages
+        messageCache[conversationId] = currentMessages
+        lastMessageCount[conversationId] = currentMessages.count
+
+        // Save to local storage
+        Task.detached(priority: .userInitiated) {
+            try? await LocalStorageService.shared.saveMessage(localMessage, status: "sending", isSynced: false)
+        }
+
+        do {
+            // Upload video to Firebase Storage
+            print("📤 Uploading video to Storage...")
+            let (videoDownloadURL, thumbnailURL, duration) = try await MediaService.shared.uploadVideo(
+                videoURL,
+                conversationId: conversationId,
+                messageId: messageId,
+                progressHandler: progressHandler
+            )
+
+            print("✅ Video uploaded: \(videoDownloadURL)")
+
+            // Prepare Firestore data with media URLs
+            let messageData: [String: Any] = [
+                "senderId": senderId,
+                "text": "",
+                "createdAt": FieldValue.serverTimestamp(),
+                "status": "sent",
+                "deliveredTo": [],
+                "readBy": [],
+                "mediaType": "video",
+                "mediaURL": videoDownloadURL,
+                "thumbnailURL": thumbnailURL,
+                "videoDuration": duration
+            ]
+
+            let conversationRef = db.collection("conversations").document(conversationId)
+            let messageRef = conversationRef.collection("messages").document(messageId)
+
+            // Use batch write
+            let batch = db.batch()
+
+            // Add message
+            batch.setData(messageData, forDocument: messageRef)
+
+            // Update conversation's last message
+            let conversationUpdate: [String: Any] = [
+                "lastMessageText": "🎥 Video",
+                "lastMessageAt": FieldValue.serverTimestamp()
+            ]
+            batch.updateData(conversationUpdate, forDocument: conversationRef)
+
+            try await batch.commit()
+            let uploadDuration = Date().timeIntervalSince(startTime)
+            print("✅ Video message sent to Firestore in \(Int(uploadDuration * 1000))ms")
+
+            // Complete performance tracking
+            await PerformanceMonitor.shared.completeMessageSend(messageId: messageId, success: true)
+
+            // Update local status
+            Task.detached(priority: .background) {
+                try? await LocalStorageService.shared.updateMessageStatus(messageId, status: "sent", isSynced: true)
+            }
+
+            // Update message in UI with URLs
+            await MainActor.run {
+                if var currentMessages = self.messages[conversationId],
+                   let index = currentMessages.firstIndex(where: { $0.id == messageId }) {
+                    currentMessages[index] = Message(
+                        id: messageId,
+                        conversationId: conversationId,
+                        senderId: senderId,
+                        text: "",
+                        createdAt: createdAt,
+                        status: "sent",
+                        mediaType: "video",
+                        mediaURL: videoDownloadURL,
+                        thumbnailURL: thumbnailURL,
+                        videoDuration: duration
+                    )
+                    self.messages[conversationId] = currentMessages
+                    self.messageCache[conversationId] = currentMessages
+                }
+            }
+
+        } catch {
+            print("❌ Error sending video message: \(error.localizedDescription)")
+
+            // Complete performance tracking (failure)
+            await PerformanceMonitor.shared.completeMessageSend(messageId: messageId, success: false)
+
+            // Update local status to error
+            Task.detached(priority: .background) {
+                try? await LocalStorageService.shared.updateMessageStatus(messageId, status: "error", isSynced: false)
+            }
+
+            // Update UI to show error
+            await MainActor.run {
+                if var currentMessages = self.messages[conversationId],
+                   let index = currentMessages.firstIndex(where: { $0.id == messageId }) {
+                    currentMessages[index] = Message(
+                        id: messageId,
+                        conversationId: conversationId,
+                        senderId: senderId,
+                        text: "",
+                        createdAt: createdAt,
+                        status: "error",
+                        mediaType: "video"
+                    )
+                    self.messages[conversationId] = currentMessages
+                    self.messageCache[conversationId] = currentMessages
+                }
+            }
+
+            throw error
+        }
+    }
+
     // MARK: - Send Voice Message
 
     /// Send a voice message with upload progress
@@ -1774,8 +1924,9 @@ struct Message: Identifiable, Codable, Hashable {
     var mediaURL: String? // URL to full-size media in Firebase Storage
     var thumbnailURL: String? // URL to thumbnail for images/videos
     var audioDuration: TimeInterval? // Duration in seconds for audio messages
+    var videoDuration: TimeInterval? // Duration in seconds for video messages
 
-    init(id: String, conversationId: String, senderId: String, text: String, createdAt: Date, status: String = "sent", deliveredTo: [String] = [], readBy: [String] = [], deletedBy: [String]? = nil, deletedForEveryone: Bool? = nil, editedAt: Date? = nil, editHistory: [String]? = nil, reactions: [String: [String]]? = nil, mediaType: String? = nil, mediaURL: String? = nil, thumbnailURL: String? = nil, audioDuration: TimeInterval? = nil) {
+    init(id: String, conversationId: String, senderId: String, text: String, createdAt: Date, status: String = "sent", deliveredTo: [String] = [], readBy: [String] = [], deletedBy: [String]? = nil, deletedForEveryone: Bool? = nil, editedAt: Date? = nil, editHistory: [String]? = nil, reactions: [String: [String]]? = nil, mediaType: String? = nil, mediaURL: String? = nil, thumbnailURL: String? = nil, audioDuration: TimeInterval? = nil, videoDuration: TimeInterval? = nil) {
         self.id = id
         self.conversationId = conversationId
         self.senderId = senderId
@@ -1793,6 +1944,7 @@ struct Message: Identifiable, Codable, Hashable {
         self.mediaURL = mediaURL
         self.thumbnailURL = thumbnailURL
         self.audioDuration = audioDuration
+        self.videoDuration = videoDuration
     }
     
     // Helper to determine overall status for UI display

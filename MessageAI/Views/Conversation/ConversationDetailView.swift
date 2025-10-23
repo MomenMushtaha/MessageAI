@@ -17,11 +17,13 @@ struct ConversationDetailView: View {
     @EnvironmentObject var chatService: ChatService
     @State private var messageText = ""
     @State private var isSending = false
-    @State private var selectedPhotoItem: PhotosPickerItem? // Selected photo from picker
-    @State private var isUploadingImage = false // Image upload in progress
+    @State private var selectedPhotoItem: PhotosPickerItem? // Selected photo/video from picker
+    @State private var isUploadingImage = false // Image/video upload in progress
     @State private var uploadProgress: Double = 0.0 // Upload progress (0.0 to 1.0)
     @State private var isRecordingVoice = false // Voice recording in progress
     @StateObject private var audioService = AudioService.shared
+    @State private var showVideoPlayer = false // Video player presentation
+    @State private var videoPlayerURL: String? // Video URL for playback
     @State private var participantUsers: [String: User] = [:] // userId -> User cache
     @State private var showParticipantList = false
     @State private var otherUserPresence: (isOnline: Bool, lastSeen: Date?) = (false, nil)
@@ -129,6 +131,10 @@ struct ConversationDetailView: View {
                                         onImageTap: {
                                             fullScreenImageMessage = message
                                             showFullScreenImage = true
+                                        },
+                                        onVideoTap: {
+                                            videoPlayerURL = message.mediaURL
+                                            showVideoPlayer = true
                                         }
                                     )
                                     .id(message.id)
@@ -394,6 +400,17 @@ struct ConversationDetailView: View {
                 }
             )
         }
+        .fullScreenCover(isPresented: $showVideoPlayer) {
+            if let videoURL = videoPlayerURL {
+                VideoPlayerView(
+                    videoURL: videoURL,
+                    onDismiss: {
+                        showVideoPlayer = false
+                        videoPlayerURL = nil
+                    }
+                )
+            }
+        }
         .onAppear {
             // Load participant users first (especially important for new groups)
             loadParticipantUsers()
@@ -506,15 +523,15 @@ struct ConversationDetailView: View {
             }
             
             HStack(spacing: 12) {
-                // Photo Picker Button
-                PhotosPicker(selection: $selectedPhotoItem, matching: .images) {
+                // Photo/Video Picker Button
+                PhotosPicker(selection: $selectedPhotoItem, matching: .any(of: [.images, .videos])) {
                     Image(systemName: "photo")
                         .font(.system(size: 22))
                         .foregroundStyle(.blue)
                 }
                 .disabled(isUploadingImage || isSending || isRecordingVoice)
                 .onChange(of: selectedPhotoItem) { _, newItem in
-                    handlePhotoSelection(newItem)
+                    handleMediaSelection(newItem)
                 }
 
                 // Text Field
@@ -1073,28 +1090,32 @@ struct ConversationDetailView: View {
         isSending = false
     }
 
-    // MARK: - Photo Handling
+    // MARK: - Photo/Video Handling
 
-    private func handlePhotoSelection(_ item: PhotosPickerItem?) {
+    private func handleMediaSelection(_ item: PhotosPickerItem?) {
         guard let item = item else { return }
 
         Task {
             do {
-                // Load the image data
-                guard let imageData = try await item.loadTransferable(type: Data.self),
-                      let image = UIImage(data: imageData) else {
-                    await MainActor.run {
-                        errorMessage = "Failed to load image"
-                        showErrorAlert = true
+                // Check if it's a video by trying to load movie
+                if let movie = try? await item.loadTransferable(type: MovieTransferable.self) {
+                    await sendVideoMessage(videoURL: movie.url)
+                } else {
+                    // It's an image
+                    guard let imageData = try await item.loadTransferable(type: Data.self),
+                          let image = UIImage(data: imageData) else {
+                        await MainActor.run {
+                            errorMessage = "Failed to load media"
+                            showErrorAlert = true
+                        }
+                        return
                     }
-                    return
+                    await sendImageMessage(image: image)
                 }
-
-                await sendImageMessage(image: image)
 
             } catch {
                 await MainActor.run {
-                    errorMessage = "Failed to load image: \(error.localizedDescription)"
+                    errorMessage = "Failed to load media: \(error.localizedDescription)"
                     showErrorAlert = true
                 }
             }
@@ -1145,6 +1166,56 @@ struct ConversationDetailView: View {
             print("❌ Error sending image message: \(error.localizedDescription)")
             await MainActor.run {
                 errorMessage = "Failed to send image: \(error.localizedDescription)"
+                showErrorAlert = true
+            }
+        }
+
+        isUploadingImage = false
+        uploadProgress = 0.0
+    }
+
+    private func sendVideoMessage(videoURL: URL) async {
+        guard let currentUserId = authService.currentUser?.id else {
+            return
+        }
+
+        isUploadingImage = true
+        uploadProgress = 0.0
+
+        // Stop typing indicator when sending video
+        if isCurrentUserTyping {
+            stopTypingIndicator(userId: currentUserId)
+        }
+
+        // Ensure auto-scroll for user's own messages
+        shouldAutoScroll = true
+
+        do {
+            try await chatService.sendVideoMessage(
+                conversationId: conversation.id,
+                senderId: currentUserId,
+                videoURL: videoURL,
+                progressHandler: { progress in
+                    Task { @MainActor in
+                        self.uploadProgress = progress
+                    }
+                }
+            )
+
+            // Scroll to bottom after sending
+            if let proxy = scrollProxy {
+                scrollToBottomAnimated(proxy: proxy)
+            }
+
+            print("✅ Video message sent successfully")
+
+            // Clean up temporary file
+            try? FileManager.default.removeItem(at: videoURL)
+
+        } catch {
+            print("❌ Error sending video message: \(error.localizedDescription)")
+            await MainActor.run {
+                errorMessage = "Failed to send video: \(error.localizedDescription)"
                 showErrorAlert = true
             }
         }
@@ -1272,6 +1343,7 @@ struct MessageBubbleRow: View, Equatable {
     let isSearchResult: Bool
     let onReactionTap: () -> Void
     let onImageTap: () -> Void
+    let onVideoTap: () -> Void
 
     // Equatable conformance for performance optimization
     static func == (lhs: MessageBubbleRow, rhs: MessageBubbleRow) -> Bool {
@@ -1317,6 +1389,15 @@ struct MessageBubbleRow: View, Equatable {
                         AudioMessageView(
                             message: message,
                             isFromCurrentUser: isFromCurrentUser
+                        )
+                        .onTapGesture(count: 2) {
+                            onReactionTap()
+                        }
+                    } else if message.mediaType == "video" {
+                        VideoMessageView(
+                            message: message,
+                            isFromCurrentUser: isFromCurrentUser,
+                            onTap: onVideoTap
                         )
                         .onTapGesture(count: 2) {
                             onReactionTap()
@@ -1521,6 +1602,24 @@ struct ScrollOffsetPreferenceKey: PreferenceKey {
                 createdAt: Date()
             )
         )
+    }
+}
+
+// MARK: - Movie Transferable
+
+import UniformTypeIdentifiers
+
+struct MovieTransferable: Transferable {
+    let url: URL
+
+    static var transferRepresentation: some TransferRepresentation {
+        FileRepresentation(contentType: .movie) { movie in
+            SentTransferredFile(movie.url)
+        } importing: { received in
+            let copy = URL.temporaryDirectory.appending(path: "\(UUID().uuidString).\(received.file.pathExtension)")
+            try FileManager.default.copyItem(at: received.file, to: copy)
+            return Self(url: copy)
+        }
     }
 }
 
