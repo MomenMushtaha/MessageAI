@@ -229,10 +229,12 @@ struct ConversationDetailView: View {
             }
         }
         .sheet(isPresented: $showParticipantList) {
-            ParticipantListView(
-                participantIds: conversation.participantIds,
+            GroupSettingsView(
+                conversation: conversation,
                 participantUsers: participantUsers
             )
+            .environmentObject(chatService)
+            .environmentObject(authService)
         }
         .sheet(isPresented: $showForwardSheet) {
             if let message = messageToForward {
@@ -1296,69 +1298,6 @@ struct BubbleShape: Shape {
             cornerRadii: CGSize(width: 16, height: 16)
         )
         return Path(path.cgPath)
-    }
-}
-
-struct ParticipantListView: View {
-    let participantIds: [String]
-    let participantUsers: [String: User]
-    
-    @Environment(\.dismiss) private var dismiss
-    
-    var body: some View {
-        NavigationStack {
-            List {
-                Section {
-                    ForEach(participantIds, id: \.self) { participantId in
-                        if let user = participantUsers[participantId] {
-                            HStack(spacing: 12) {
-                                Circle()
-                                    .fill(Color.blue)
-                                    .frame(width: 40, height: 40)
-                                    .overlay {
-                                        Text(user.initials)
-                                            .font(.subheadline)
-                                            .foregroundStyle(.white)
-                                    }
-                                
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(user.displayName)
-                                        .font(.headline)
-                                    
-                                    Text(user.email)
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                }
-                            }
-                        } else {
-                            HStack(spacing: 12) {
-                                Circle()
-                                    .fill(Color.gray)
-                                    .frame(width: 40, height: 40)
-                                    .overlay {
-                                        ProgressView()
-                                            .tint(.white)
-                                    }
-                                
-                                Text("Loading...")
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
-                    }
-                } header: {
-                    Text("\(participantIds.count) Participants")
-                }
-            }
-            .navigationTitle("Group Info")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("Done") {
-                        dismiss()
-                    }
-                }
-            }
-        }
     }
 }
 

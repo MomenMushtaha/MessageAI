@@ -1441,6 +1441,102 @@ class ChatService: ObservableObject {
         print("✅ User \(userId) promoted to admin")
     }
 
+    // MARK: - Group Management
+
+    /// Update group information (name, description)
+    func updateGroupInfo(conversationId: String, groupName: String?, groupDescription: String?, adminId: String) async throws {
+        let conversationRef = db.collection("conversations").document(conversationId)
+
+        // Verify admin permissions
+        let doc = try await conversationRef.getDocument()
+        guard let conversation = try? doc.data(as: Conversation.self) else {
+            throw NSError(domain: "ChatService", code: 404, userInfo: [NSLocalizedDescriptionKey: "Conversation not found"])
+        }
+
+        guard conversation.type == .group else {
+            throw NSError(domain: "ChatService", code: 400, userInfo: [NSLocalizedDescriptionKey: "Not a group conversation"])
+        }
+
+        guard conversation.isAdmin(adminId) else {
+            throw NSError(domain: "ChatService", code: 403, userInfo: [NSLocalizedDescriptionKey: "Only admins can update group info"])
+        }
+
+        var updateData: [String: Any] = [:]
+        if let name = groupName {
+            updateData["groupName"] = name
+        }
+        if let description = groupDescription {
+            updateData["groupDescription"] = description
+        }
+
+        guard !updateData.isEmpty else { return }
+
+        try await conversationRef.updateData(updateData)
+        print("✅ Updated group info")
+    }
+
+    /// Leave a group conversation
+    func leaveGroup(conversationId: String, userId: String) async throws {
+        let conversationRef = db.collection("conversations").document(conversationId)
+
+        // Get conversation data
+        let doc = try await conversationRef.getDocument()
+        guard let conversation = try? doc.data(as: Conversation.self) else {
+            throw NSError(domain: "ChatService", code: 404, userInfo: [NSLocalizedDescriptionKey: "Conversation not found"])
+        }
+
+        guard conversation.type == .group else {
+            throw NSError(domain: "ChatService", code: 400, userInfo: [NSLocalizedDescriptionKey: "Not a group conversation"])
+        }
+
+        // Check if user is the last admin
+        if conversation.isAdmin(userId) {
+            let adminCount = conversation.adminIds?.count ?? 0
+            if adminCount <= 1 {
+                throw NSError(domain: "ChatService", code: 400, userInfo: [NSLocalizedDescriptionKey: "Cannot leave: you are the last admin. Please promote another admin first."])
+            }
+        }
+
+        // Remove user from participants and admins
+        try await conversationRef.updateData([
+            "participantIds": FieldValue.arrayRemove([userId]),
+            "adminIds": FieldValue.arrayRemove([userId])
+        ])
+
+        // Send system message
+        let systemMessage = "left the group"
+        try await sendMessage(conversationId: conversationId, senderId: userId, text: systemMessage)
+
+        print("✅ User \(userId) left the group")
+    }
+
+    /// Remove admin status from a user
+    func removeAdmin(conversationId: String, userId: String, currentAdminId: String) async throws {
+        let conversationRef = db.collection("conversations").document(conversationId)
+
+        // Verify current user is admin
+        let doc = try await conversationRef.getDocument()
+        guard let conversation = try? doc.data(as: Conversation.self) else {
+            throw NSError(domain: "ChatService", code: 404, userInfo: [NSLocalizedDescriptionKey: "Conversation not found"])
+        }
+
+        guard conversation.isAdmin(currentAdminId) else {
+            throw NSError(domain: "ChatService", code: 403, userInfo: [NSLocalizedDescriptionKey: "Only admins can remove admin status"])
+        }
+
+        // Prevent removing last admin
+        let adminCount = conversation.adminIds?.count ?? 0
+        if adminCount <= 1 {
+            throw NSError(domain: "ChatService", code: 400, userInfo: [NSLocalizedDescriptionKey: "Cannot remove the last admin"])
+        }
+
+        try await conversationRef.updateData([
+            "adminIds": FieldValue.arrayRemove([userId])
+        ])
+
+        print("✅ Removed admin status from user \(userId)")
+    }
+
     // MARK: - Sync Pending Messages
     
     func syncPendingMessages() async {

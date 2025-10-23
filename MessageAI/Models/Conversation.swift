@@ -22,6 +22,7 @@ struct Conversation: Identifiable, Codable, Hashable {
 
     // Group-specific properties
     var groupName: String?
+    var groupDescription: String?
     var groupAvatarURL: String?
     var adminIds: [String]? // Array of user IDs who are admins (group creator + appointed admins)
 
@@ -35,6 +36,7 @@ struct Conversation: Identifiable, Codable, Hashable {
         lastMessageText: String? = nil,
         lastMessageAt: Date? = nil,
         groupName: String? = nil,
+        groupDescription: String? = nil,
         groupAvatarURL: String? = nil,
         adminIds: [String]? = nil,
         createdAt: Date = Date()
@@ -45,6 +47,7 @@ struct Conversation: Identifiable, Codable, Hashable {
         self.lastMessageText = lastMessageText
         self.lastMessageAt = lastMessageAt
         self.groupName = groupName
+        self.groupDescription = groupDescription
         self.groupAvatarURL = groupAvatarURL
         self.adminIds = adminIds
         self.createdAt = createdAt
