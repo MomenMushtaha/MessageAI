@@ -32,6 +32,12 @@ struct Conversation: Identifiable, Codable, Hashable {
     // Message pinning
     var pinnedMessageIds: [String]?
 
+    // Per-user settings - maps userId to their settings
+    var participantSettings: [String: ParticipantSettings]?
+
+    // Member join dates - maps userId to join date
+    var memberJoinDates: [String: Date]?
+
     init(
         id: String,
         type: ConversationType = .direct,
@@ -77,7 +83,34 @@ struct Conversation: Identifiable, Codable, Hashable {
             return otherUser?.displayName ?? "Unknown User"
         }
     }
+
+    // Helper to check if conversation is muted for a user
+    func isMuted(for userId: String) -> Bool {
+        guard let settings = participantSettings?[userId] else { return false }
+
+        // Check if mute has expired
+        if let muteUntil = settings.muteUntil, muteUntil < Date() {
+            return false
+        }
+
+        return settings.isMuted
+    }
+
+    // Helper to get member join date
+    func joinDate(for userId: String) -> Date? {
+        return memberJoinDates?[userId]
+    }
 }
 
+// MARK: - Participant Settings
 
+struct ParticipantSettings: Codable, Hashable {
+    var isMuted: Bool = false
+    var muteUntil: Date? = nil // Optional: mute until specific date
+
+    init(isMuted: Bool = false, muteUntil: Date? = nil) {
+        self.isMuted = isMuted
+        self.muteUntil = muteUntil
+    }
+}
 

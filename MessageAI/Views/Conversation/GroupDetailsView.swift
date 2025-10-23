@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import PhotosUI
 
 struct GroupSettingsView: View {
     let conversation: Conversation
@@ -23,6 +24,8 @@ struct GroupSettingsView: View {
     @State private var showErrorAlert = false
     @State private var errorMessage = ""
     @State private var isSaving = false
+    @State private var selectedAvatarItem: PhotosPickerItem?
+    @State private var groupAvatarImage: UIImage?
 
     init(conversation: Conversation, participantUsers: [String: User]) {
         self.conversation = conversation
@@ -44,14 +47,83 @@ struct GroupSettingsView: View {
                     // Group Avatar
                     HStack {
                         Spacer()
-                        Circle()
-                            .fill(Color.blue.opacity(0.3))
-                            .frame(width: 100, height: 100)
-                            .overlay {
-                                Image(systemName: "person.3.fill")
-                                    .font(.system(size: 40))
-                                    .foregroundStyle(Color.blue)
+                        PhotosPicker(selection: $selectedAvatarItem, matching: .images) {
+                            if let groupAvatarImage {
+                                Image(uiImage: groupAvatarImage)
+                                    .resizable()
+                                    .scaledToFill()
+                                    .frame(width: 100, height: 100)
+                                    .clipShape(Circle())
+                                    .overlay {
+                                        if isEditing && isCurrentUserAdmin {
+                                            Circle()
+                                                .fill(Color.black.opacity(0.5))
+                                                .overlay {
+                                                    Image(systemName: "camera.fill")
+                                                        .foregroundStyle(.white)
+                                                        .font(.title2)
+                                                }
+                                        }
+                                    }
+                            } else if let avatarURL = conversation.groupAvatarURL {
+                                AsyncImage(url: URL(string: avatarURL)) { phase in
+                                    switch phase {
+                                    case .success(let image):
+                                        image
+                                            .resizable()
+                                            .scaledToFill()
+                                            .frame(width: 100, height: 100)
+                                            .clipShape(Circle())
+                                    default:
+                                        Circle()
+                                            .fill(Color.blue.opacity(0.3))
+                                            .frame(width: 100, height: 100)
+                                            .overlay {
+                                                Image(systemName: "person.3.fill")
+                                                    .font(.system(size: 40))
+                                                    .foregroundStyle(Color.blue)
+                                            }
+                                    }
+                                }
+                                .overlay {
+                                    if isEditing && isCurrentUserAdmin {
+                                        Circle()
+                                            .fill(Color.black.opacity(0.5))
+                                            .overlay {
+                                                Image(systemName: "camera.fill")
+                                                    .foregroundStyle(.white)
+                                                    .font(.title2)
+                                            }
+                                    }
+                                }
+                            } else {
+                                Circle()
+                                    .fill(Color.blue.opacity(0.3))
+                                    .frame(width: 100, height: 100)
+                                    .overlay {
+                                        Image(systemName: "person.3.fill")
+                                            .font(.system(size: 40))
+                                            .foregroundStyle(Color.blue)
+                                    }
+                                    .overlay {
+                                        if isEditing && isCurrentUserAdmin {
+                                            Circle()
+                                                .fill(Color.black.opacity(0.5))
+                                                .overlay {
+                                                    Image(systemName: "camera.fill")
+                                                        .foregroundStyle(.white)
+                                                        .font(.title2)
+                                                }
+                                        }
+                                    }
                             }
+                        }
+                        .disabled(!isEditing || !isCurrentUserAdmin)
+                        .onChange(of: selectedAvatarItem) { _, newItem in
+                            Task {
+                                await handleAvatarSelection(newItem)
+                            }
+                        }
                         Spacer()
                     }
                     .listRowBackground(Color.clear)
@@ -148,6 +220,28 @@ struct GroupSettingsView: View {
                     Text("\(conversation.participantIds.count) Participants")
                 }
 
+                // Settings Section
+                Section {
+                    Toggle(isOn: Binding(
+                        get: {
+                            guard let userId = authService.currentUser?.id else { return false }
+                            return conversation.participantSettings?[userId]?.isMuted ?? false
+                        },
+                        set: { newValue in
+                            Task {
+                                await toggleMute(isMuted: newValue)
+                            }
+                        }
+                    )) {
+                        HStack {
+                            Image(systemName: "bell.slash.fill")
+                            Text("Mute Notifications")
+                        }
+                    }
+                } header: {
+                    Text("Settings")
+                }
+
                 // Actions Section
                 Section {
                     if isCurrentUserAdmin {
@@ -233,6 +327,21 @@ struct GroupSettingsView: View {
                 adminId: currentUserId
             )
             isEditing = false
+        } catch {
+            errorMessage = error.localizedDescription
+            showErrorAlert = true
+        }
+    }
+
+    private func toggleMute(isMuted: Bool) async {
+        guard let currentUserId = authService.currentUser?.id else { return }
+
+        do {
+            try await chatService.toggleMuteNotifications(
+                conversationId: conversation.id,
+                userId: currentUserId,
+                isMuted: isMuted
+            )
         } catch {
             errorMessage = error.localizedDescription
             showErrorAlert = true

@@ -7,6 +7,7 @@
 
 import Foundation
 import FirebaseFirestore
+import FirebaseStorage
 import Combine
 
 @MainActor
@@ -1751,6 +1752,19 @@ class ChatService: ObservableObject {
         print("✅ User \(userId) left the group")
     }
 
+    /// Toggle mute notifications for a conversation
+    func toggleMuteNotifications(conversationId: String, userId: String, isMuted: Bool) async throws {
+        let conversationRef = db.collection("conversations").document(conversationId)
+
+        let settings = ParticipantSettings(isMuted: isMuted)
+
+        try await conversationRef.updateData([
+            "participantSettings.\(userId).isMuted": isMuted
+        ])
+
+        print("✅ Mute notifications toggled: \(isMuted) for user \(userId)")
+    }
+
     /// Remove admin status from a user
     func removeAdmin(conversationId: String, userId: String, currentAdminId: String) async throws {
         let conversationRef = db.collection("conversations").document(conversationId)
@@ -1776,6 +1790,56 @@ class ChatService: ObservableObject {
         ])
 
         print("✅ Removed admin status from user \(userId)")
+    }
+
+    /// Update group avatar
+    func updateGroupAvatar(conversationId: String, image: UIImage, adminId: String) async throws {
+        let conversationRef = db.collection("conversations").document(conversationId)
+
+        // Verify admin permissions
+        let doc = try await conversationRef.getDocument()
+        guard let conversation = try? doc.data(as: Conversation.self) else {
+            throw NSError(domain: "ChatService", code: 404, userInfo: [NSLocalizedDescriptionKey: "Conversation not found"])
+        }
+
+        guard conversation.type == .group else {
+            throw NSError(domain: "ChatService", code: 400, userInfo: [NSLocalizedDescriptionKey: "Not a group conversation"])
+        }
+
+        guard conversation.isAdmin(adminId) else {
+            throw NSError(domain: "ChatService", code: 403, userInfo: [NSLocalizedDescriptionKey: "Only admins can update group avatar"])
+        }
+
+        // Upload avatar using MediaService (we'll create a special avatar upload method)
+        let avatarURL = try await uploadGroupAvatarImage(image, conversationId: conversationId)
+
+        // Update conversation with avatar URL
+        try await conversationRef.updateData([
+            "groupAvatarURL": avatarURL
+        ])
+
+        print("✅ Updated group avatar")
+    }
+
+    /// Upload group avatar image to Firebase Storage
+    private func uploadGroupAvatarImage(_ image: UIImage, conversationId: String) async throws -> String {
+        guard let imageData = image.jpegData(compressionQuality: 0.8) else {
+            throw NSError(domain: "ChatService", code: 400, userInfo: [NSLocalizedDescriptionKey: "Failed to compress image"])
+        }
+
+        let storage = Storage.storage()
+        let storageRef = storage.reference()
+        let avatarPath = "conversations/\(conversationId)/avatar.jpg"
+        let avatarRef = storageRef.child(avatarPath)
+
+        let metadata = StorageMetadata()
+        metadata.contentType = "image/jpeg"
+
+        _ = try await avatarRef.putData(imageData, metadata: metadata)
+
+        // Get download URL
+        let downloadURL = try await avatarRef.downloadURL()
+        return downloadURL.absoluteString
     }
 
     // MARK: - Message Pinning
