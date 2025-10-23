@@ -1,0 +1,141 @@
+rules_version = '2';
+
+service firebase.storage {
+  match /b/{bucket}/o {
+    
+    // ============================================
+    // HELPER FUNCTIONS
+    // ============================================
+    
+    // Check if user is authenticated
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    // Check if the authenticated user matches the given userId
+    function isOwner(userId) {
+      return request.auth != null && request.auth.uid == userId;
+    }
+    
+    // Validate file size (max 10MB for images, 100MB for videos)
+    function isValidSize(maxSizeMB) {
+      return request.resource.size < maxSizeMB * 1024 * 1024;
+    }
+    
+    // Validate image file types
+    function isImage() {
+      return request.resource.contentType.matches('image/.*');
+    }
+    
+    // Validate video file types
+    function isVideo() {
+      return request.resource.contentType.matches('video/.*');
+    }
+    
+    // Validate document file types
+    function isDocument() {
+      return request.resource.contentType.matches('application/pdf') ||
+             request.resource.contentType.matches('application/msword') ||
+             request.resource.contentType.matches('application/vnd.openxmlformats-officedocument.*') ||
+             request.resource.contentType.matches('text/.*');
+    }
+    
+    // ============================================
+    // USER PROFILE IMAGES
+    // ============================================
+    
+    match /users/{userId}/profile/{fileName} {
+      // Anyone authenticated can read profile images (public)
+      allow read: if isAuthenticated();
+      
+      // Only the user can upload/update their own profile image
+      allow write: if isOwner(userId) &&
+                     isImage() &&
+                     isValidSize(5); // 5MB max
+      
+      // Allow user to delete their own profile image
+      allow delete: if isOwner(userId);
+    }
+    
+    // ============================================
+    // CONVERSATION MEDIA (IMAGES, VIDEOS, FILES)
+    // ============================================
+    
+    match /conversations/{conversationId}/media/{userId}/{fileName} {
+      // Read: Anyone who is a participant in the conversation can view media
+      // Note: We can't directly check Firestore from Storage rules,
+      // so we rely on security through obscurity (random file names)
+      // and validate on upload that user is a participant
+      allow read: if isAuthenticated();
+      
+      // Write: Only authenticated users can upload to their own folder
+      // Validation happens in the app before upload
+      allow write: if isOwner(userId) &&
+                     (
+                       (isImage() && isValidSize(10)) ||      // Images: 10MB max
+                       (isVideo() && isValidSize(100)) ||      // Videos: 100MB max
+                       (isDocument() && isValidSize(20))       // Documents: 20MB max
+                     );
+      
+      // Delete: Only the uploader or conversation admin can delete
+      // (Admin check would require Firestore lookup, so we allow owner only)
+      allow delete: if isOwner(userId);
+    }
+    
+    // ============================================
+    // THUMBNAILS
+    // ============================================
+    
+    match /conversations/{conversationId}/thumbnails/{userId}/{fileName} {
+      // Same read rules as media
+      allow read: if isAuthenticated();
+      
+      // System-generated thumbnails (Cloud Functions)
+      // Users shouldn't directly upload thumbnails, but we allow it for the same user
+      allow write: if isOwner(userId) &&
+                     isImage() &&
+                     isValidSize(1); // 1MB max for thumbnails
+      
+      allow delete: if isOwner(userId);
+    }
+    
+    // ============================================
+    // GROUP AVATARS
+    // ============================================
+    
+    match /groups/{conversationId}/avatar/{fileName} {
+      // Anyone authenticated can read group avatars (public)
+      allow read: if isAuthenticated();
+      
+      // Only group admins can upload/change group avatar
+      // (We can't check admin status from Storage, so validate in app)
+      allow write: if isAuthenticated() &&
+                     isImage() &&
+                     isValidSize(2); // 2MB max
+      
+      allow delete: if isAuthenticated();
+    }
+    
+    // ============================================
+    // TEMPORARY UPLOADS (for processing)
+    // ============================================
+    
+    match /temp/{userId}/{fileName} {
+      // Temporary storage for uploads being processed
+      // Users can only access their own temp folder
+      allow read, write: if isOwner(userId) &&
+                           isValidSize(100); // 100MB max
+      
+      allow delete: if isOwner(userId);
+    }
+    
+    // ============================================
+    // DENY ALL OTHER PATHS
+    // ============================================
+    
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}
+
