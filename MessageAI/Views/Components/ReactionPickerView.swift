@@ -12,6 +12,7 @@ struct ReactionPickerView: View {
     let onDismiss: () -> Void
     
     // Common emoji reactions (WhatsApp style)
+    // Using Unicode literals to avoid text input system issues
     private let reactions = ["👍", "❤️", "😂", "😮", "😢", "🙏", "🔥", "🎉"]
     
     var body: some View {
@@ -24,10 +25,11 @@ struct ReactionPickerView: View {
             
             // Reaction buttons
             HStack(spacing: 8) {
-                ForEach(reactions, id: \.self) { emoji in
+                ForEach(Array(reactions.enumerated()), id: \.offset) { index, emoji in
                     Button(action: {
                         selectReaction(emoji)
                     }) {
+                        // Use Text with explicit font to avoid input system
                         Text(emoji)
                             .font(.system(size: 32))
                             .frame(width: 50, height: 50)
@@ -37,7 +39,8 @@ struct ReactionPickerView: View {
                                     .shadow(color: .black.opacity(0.1), radius: 2, x: 0, y: 1)
                             )
                     }
-                    .buttonStyle(ScaleButtonStyle())
+                    .buttonStyle(PlainButtonStyle()) // Use PlainButtonStyle to avoid conflicts
+                    .contentShape(Circle()) // Ensure tap area is defined
                 }
             }
             .padding(.horizontal, 16)

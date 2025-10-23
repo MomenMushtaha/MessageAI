@@ -1,0 +1,4 @@
+# Excluded Config.xcconfig from tracking
+# This file should NEVER be committed
+# Use Config.example.xcconfig as a template
+!Config.xcconfig

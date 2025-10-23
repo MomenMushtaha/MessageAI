@@ -531,6 +531,10 @@ struct ConversationDetailView: View {
                 .padding(.bottom, 100)
             }
             .transition(.scale.combined(with: .opacity))
+            .onAppear {
+                // Dismiss keyboard to avoid input session conflicts
+                UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+            }
         }
     }
 
