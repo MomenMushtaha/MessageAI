@@ -140,6 +140,64 @@ class MediaService {
         imageCache.removeAllObjects()
         print("🗑️ Image cache cleared")
     }
+
+    // MARK: - Audio Upload
+
+    /// Upload an audio file to Firebase Storage
+    /// - Parameters:
+    ///   - audioData: Audio data to upload
+    ///   - conversationId: Conversation ID
+    ///   - messageId: Message ID
+    ///   - duration: Audio duration in seconds
+    ///   - progressHandler: Optional progress callback (0.0 to 1.0)
+    /// - Returns: Audio file URL
+    func uploadAudio(
+        _ audioData: Data,
+        conversationId: String,
+        messageId: String,
+        duration: TimeInterval,
+        progressHandler: ((Double) -> Void)? = nil
+    ) async throws -> String {
+        print("📤 Starting audio upload for message: \(messageId)")
+
+        let storageRef = storage.reference()
+        let audioPath = "conversations/\(conversationId)/media/\(messageId)/audio.m4a"
+        let audioRef = storageRef.child(audioPath)
+
+        // Set metadata
+        let metadata = StorageMetadata()
+        metadata.contentType = "audio/m4a"
+        metadata.customMetadata = [
+            "duration": String(duration),
+            "messageId": messageId
+        ]
+
+        do {
+            // Upload with progress tracking
+            let uploadTask = audioRef.putData(audioData, metadata: metadata)
+
+            uploadTask.observe(.progress) { snapshot in
+                if let progress = snapshot.progress {
+                    let percentComplete = Double(progress.completedUnitCount) / Double(progress.totalUnitCount)
+                    Task { @MainActor in
+                        progressHandler?(percentComplete)
+                    }
+                }
+            }
+
+            _ = try await uploadTask
+
+            // Get download URL
+            let audioURL = try await audioRef.downloadURL().absoluteString
+
+            print("✅ Audio uploaded successfully: \(audioURL)")
+            return audioURL
+
+        } catch {
+            print("❌ Audio upload failed: \(error.localizedDescription)")
+            throw MediaError.uploadFailed
+        }
+    }
 }
 
 // MARK: - Media Errors

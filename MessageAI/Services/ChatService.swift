@@ -849,6 +849,97 @@ class ChatService: ObservableObject {
         }
     }
 
+    // MARK: - Send Voice Message
+
+    /// Send a voice message with upload progress
+    func sendVoiceMessage(
+        conversationId: String,
+        senderId: String,
+        audioData: Data,
+        duration: TimeInterval,
+        progressHandler: ((Double) -> Void)? = nil
+    ) async throws {
+        let messageId = UUID().uuidString
+        let createdAt = Date()
+
+        // Create local message immediately (optimistic UI)
+        let localMessage = Message(
+            id: messageId,
+            conversationId: conversationId,
+            senderId: senderId,
+            text: "",
+            createdAt: createdAt,
+            status: "sending",
+            mediaType: "audio",
+            audioDuration: duration
+        )
+
+        // Update UI immediately
+        var currentMessages = messages[conversationId] ?? []
+        currentMessages.append(localMessage)
+        messages[conversationId] = currentMessages
+
+        do {
+            // Upload audio to Firebase Storage
+            let audioURL = try await MediaService.shared.uploadAudio(
+                audioData,
+                conversationId: conversationId,
+                messageId: messageId,
+                duration: duration,
+                progressHandler: progressHandler
+            )
+
+            // Save to Firestore with audio URL
+            let messageData: [String: Any] = [
+                "senderId": senderId,
+                "text": "",
+                "createdAt": FieldValue.serverTimestamp(),
+                "status": "sent",
+                "deliveredTo": [],
+                "readBy": [],
+                "mediaType": "audio",
+                "mediaURL": audioURL,
+                "audioDuration": duration
+            ]
+
+            let messageRef = db.collection("conversations")
+                .document(conversationId)
+                .collection("messages")
+                .document(messageId)
+
+            let conversationRef = db.collection("conversations").document(conversationId)
+
+            // Batch write: message + conversation update
+            let batch = db.batch()
+            batch.setData(messageData, forDocument: messageRef)
+            batch.updateData([
+                "lastMessageText": "🎤 Voice message",
+                "lastMessageAt": FieldValue.serverTimestamp()
+            ], forDocument: conversationRef)
+
+            try await batch.commit()
+
+            // Update local message status
+            if let index = currentMessages.firstIndex(where: { $0.id == messageId }) {
+                currentMessages[index].status = "sent"
+                currentMessages[index].mediaURL = audioURL
+                messages[conversationId] = currentMessages
+            }
+
+            print("✅ Voice message sent successfully")
+
+        } catch {
+            // Rollback on failure
+            if let index = currentMessages.firstIndex(where: { $0.id == messageId }) {
+                currentMessages[index].status = "failed"
+                messages[conversationId] = currentMessages
+            }
+
+            print("❌ Voice message failed: \(error.localizedDescription)")
+            throw error
+        }
+    }
+
     // MARK: - Create Conversation
     
     func createOrGetConversation(participantIds: [String], type: ConversationType = .direct, groupName: String? = nil) async throws -> String {
@@ -1679,11 +1770,12 @@ struct Message: Identifiable, Codable, Hashable {
     var editedAt: Date? // Timestamp when message was last edited
     var editHistory: [String]? // Array of previous message text versions (optional)
     var reactions: [String: [String]]? // Dictionary of emoji -> array of user IDs who reacted
-    var mediaType: String? // Type of media: "image", "video", "file"
+    var mediaType: String? // Type of media: "image", "video", "audio", "file"
     var mediaURL: String? // URL to full-size media in Firebase Storage
     var thumbnailURL: String? // URL to thumbnail for images/videos
+    var audioDuration: TimeInterval? // Duration in seconds for audio messages
 
-    init(id: String, conversationId: String, senderId: String, text: String, createdAt: Date, status: String = "sent", deliveredTo: [String] = [], readBy: [String] = [], deletedBy: [String]? = nil, deletedForEveryone: Bool? = nil, editedAt: Date? = nil, editHistory: [String]? = nil, reactions: [String: [String]]? = nil, mediaType: String? = nil, mediaURL: String? = nil, thumbnailURL: String? = nil) {
+    init(id: String, conversationId: String, senderId: String, text: String, createdAt: Date, status: String = "sent", deliveredTo: [String] = [], readBy: [String] = [], deletedBy: [String]? = nil, deletedForEveryone: Bool? = nil, editedAt: Date? = nil, editHistory: [String]? = nil, reactions: [String: [String]]? = nil, mediaType: String? = nil, mediaURL: String? = nil, thumbnailURL: String? = nil, audioDuration: TimeInterval? = nil) {
         self.id = id
         self.conversationId = conversationId
         self.senderId = senderId
@@ -1700,6 +1792,7 @@ struct Message: Identifiable, Codable, Hashable {
         self.mediaType = mediaType
         self.mediaURL = mediaURL
         self.thumbnailURL = thumbnailURL
+        self.audioDuration = audioDuration
     }
     
     // Helper to determine overall status for UI display
