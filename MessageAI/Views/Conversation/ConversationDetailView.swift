@@ -56,6 +56,7 @@ struct ConversationDetailView: View {
     @State private var messageToForward: Message? // Message to forward
     @State private var showFullScreenImage = false // Show full-screen image viewer
     @State private var fullScreenImageMessage: Message? // Message for full-screen image
+    @State private var showAIInsights = false // Show AI Insights sheet
     @Environment(\.dismiss) private var dismiss
 
     // Computed property to check if user can send messages
@@ -300,6 +301,14 @@ struct ConversationDetailView: View {
                         Image(systemName: isSearching ? "xmark" : "magnifyingglass")
                             .foregroundStyle(.blue)
                     }
+                    
+                    // AI Insights button
+                    Button(action: {
+                        showAIInsights = true
+                    }) {
+                        Image(systemName: "sparkles")
+                            .foregroundStyle(.purple)
+                    }
 
                     // Menu
                     Menu {
@@ -436,6 +445,12 @@ struct ConversationDetailView: View {
                 onCancel: {
                     isRecordingVoice = false
                 }
+            )
+        }
+        .sheet(isPresented: $showAIInsights) {
+            AIInsightsView(
+                conversationId: conversation.id,
+                messages: currentMessages
             )
         }
         .fullScreenCover(isPresented: $showVideoPlayer) {

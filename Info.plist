@@ -2,19 +2,60 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<!-- Microphone Usage - Required for voice messages -->
-	<key>NSMicrophoneUsageDescription</key>
-	<string>MessageAI needs access to your microphone to record and send voice messages to your contacts.</string>
-
-	<!-- Camera Usage - Required for taking photos/videos -->
+	<key>CFBundleDevelopmentRegion</key>
+	<string>$(DEVELOPMENT_LANGUAGE)</string>
+	<key>CFBundleDisplayName</key>
+	<string>MessageAI</string>
+	<key>CFBundleExecutable</key>
+	<string>$(EXECUTABLE_NAME)</string>
+	<key>CFBundleIdentifier</key>
+	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>$(PRODUCT_NAME)</string>
+	<key>CFBundlePackageType</key>
+	<string>$(PRODUCT_BUNDLE_PACKAGE_TYPE)</string>
+	<key>CFBundleShortVersionString</key>
+	<string>1.0</string>
+	<key>CFBundleVersion</key>
+	<string>1</string>
+	<key>LSRequiresIPhoneOS</key>
+	<true/>
+	<key>UIApplicationSceneManifest</key>
+	<dict>
+		<key>UIApplicationSupportsMultipleScenes</key>
+		<false/>
+		<key>UISceneConfigurations</key>
+		<dict/>
+	</dict>
+	<key>UIApplicationSupportsIndirectInputEvents</key>
+	<true/>
+	<key>UILaunchScreen</key>
+	<dict/>
+	<key>UIRequiredDeviceCapabilities</key>
+	<array>
+		<string>armv7</string>
+	</array>
+	<key>UISupportedInterfaceOrientations</key>
+	<array>
+		<string>UIInterfaceOrientationPortrait</string>
+		<string>UIInterfaceOrientationLandscapeLeft</string>
+		<string>UIInterfaceOrientationLandscapeRight</string>
+	</array>
+	<key>UISupportedInterfaceOrientations~ipad</key>
+	<array>
+		<string>UIInterfaceOrientationPortrait</string>
+		<string>UIInterfaceOrientationPortraitUpsideDown</string>
+		<string>UIInterfaceOrientationLandscapeLeft</string>
+		<string>UIInterfaceOrientationLandscapeRight</string>
+	</array>
 	<key>NSCameraUsageDescription</key>
 	<string>MessageAI needs access to your camera to take photos and videos to share with your contacts.</string>
-
-	<!-- Photo Library Usage - Required for selecting photos/videos -->
+	<key>NSMicrophoneUsageDescription</key>
+	<string>MessageAI needs access to your microphone to record and send voice messages to your contacts.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>MessageAI needs access to your photo library to select photos and videos to share with your contacts.</string>
-
-	<!-- Photo Library Add Usage - Required for saving photos -->
 	<key>NSPhotoLibraryAddUsageDescription</key>
 	<string>MessageAI needs permission to save photos and videos to your photo library.</string>
 </dict>
