@@ -243,6 +243,57 @@ struct GroupSettingsView: View {
                     Text("Settings")
                 }
 
+                // Group Permissions Section (Admins Only)
+                if isCurrentUserAdmin {
+                    Section {
+                        Toggle(isOn: Binding(
+                            get: {
+                                conversation.groupPermissions?.onlyAdminsCanMessage ?? false
+                            },
+                            set: { newValue in
+                                Task {
+                                    await updatePermission(onlyAdminsCanMessage: newValue)
+                                }
+                            }
+                        )) {
+                            VStack(alignment: .leading, spacing: 4) {
+                                HStack {
+                                    Image(systemName: "lock.fill")
+                                    Text("Only Admins Can Send Messages")
+                                }
+                                Text("When enabled, only admins can send messages to this group")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+
+                        Toggle(isOn: Binding(
+                            get: {
+                                conversation.groupPermissions?.onlyAdminsCanAddMembers ?? false
+                            },
+                            set: { newValue in
+                                Task {
+                                    await updatePermission(onlyAdminsCanAddMembers: newValue)
+                                }
+                            }
+                        )) {
+                            VStack(alignment: .leading, spacing: 4) {
+                                HStack {
+                                    Image(systemName: "person.badge.plus")
+                                    Text("Only Admins Can Add Members")
+                                }
+                                Text("When enabled, only admins can add new members")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    } header: {
+                        Text("Group Permissions")
+                    } footer: {
+                        Text("These settings control what non-admin members can do in this group")
+                    }
+                }
+
                 // Actions Section
                 Section {
                     if isCurrentUserAdmin {
@@ -381,6 +432,22 @@ struct GroupSettingsView: View {
                 conversationId: conversation.id,
                 userId: currentUserId,
                 isMuted: isMuted
+            )
+        } catch {
+            errorMessage = error.localizedDescription
+            showErrorAlert = true
+        }
+    }
+
+    private func updatePermission(onlyAdminsCanMessage: Bool? = nil, onlyAdminsCanAddMembers: Bool? = nil) async {
+        guard let currentUserId = authService.currentUser?.id else { return }
+
+        do {
+            try await chatService.updateGroupPermissions(
+                conversationId: conversation.id,
+                onlyAdminsCanMessage: onlyAdminsCanMessage,
+                onlyAdminsCanAddMembers: onlyAdminsCanAddMembers,
+                adminId: currentUserId
             )
         } catch {
             errorMessage = error.localizedDescription

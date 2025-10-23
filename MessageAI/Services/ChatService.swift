@@ -572,16 +572,23 @@ class ChatService: ObservableObject {
     
     func sendMessage(conversationId: String, senderId: String, text: String) async throws {
         let trimmedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        
+
         // Validate message text
         guard !trimmedText.isEmpty else {
             throw ChatError.emptyMessage
         }
-        
+
         guard trimmedText.count <= 4096 else {
             throw ChatError.messageTooLong
         }
-        
+
+        // Check group permissions (if applicable)
+        if let conversation = conversations.first(where: { $0.id == conversationId }),
+           conversation.type == .group,
+           !conversation.canSendMessage(senderId) {
+            throw NSError(domain: "ChatService", code: 403, userInfo: [NSLocalizedDescriptionKey: "Only admins can send messages in this group"])
+        }
+
         let startTime = Date()
         print("📤 Sending message to conversation: \(conversationId)")
         
@@ -1840,6 +1847,45 @@ class ChatService: ObservableObject {
         // Get download URL
         let downloadURL = try await avatarRef.downloadURL()
         return downloadURL.absoluteString
+    }
+
+    /// Update group permissions (admins only)
+    func updateGroupPermissions(
+        conversationId: String,
+        onlyAdminsCanMessage: Bool?,
+        onlyAdminsCanAddMembers: Bool?,
+        adminId: String
+    ) async throws {
+        let conversationRef = db.collection("conversations").document(conversationId)
+
+        // Verify admin permissions
+        let doc = try await conversationRef.getDocument()
+        guard let conversation = try? doc.data(as: Conversation.self) else {
+            throw NSError(domain: "ChatService", code: 404, userInfo: [NSLocalizedDescriptionKey: "Conversation not found"])
+        }
+
+        guard conversation.type == .group else {
+            throw NSError(domain: "ChatService", code: 400, userInfo: [NSLocalizedDescriptionKey: "Not a group conversation"])
+        }
+
+        guard conversation.isAdmin(adminId) else {
+            throw NSError(domain: "ChatService", code: 403, userInfo: [NSLocalizedDescriptionKey: "Only admins can update group permissions"])
+        }
+
+        var updateData: [String: Any] = [:]
+
+        if let onlyAdminsCanMessage = onlyAdminsCanMessage {
+            updateData["groupPermissions.onlyAdminsCanMessage"] = onlyAdminsCanMessage
+        }
+
+        if let onlyAdminsCanAddMembers = onlyAdminsCanAddMembers {
+            updateData["groupPermissions.onlyAdminsCanAddMembers"] = onlyAdminsCanAddMembers
+        }
+
+        guard !updateData.isEmpty else { return }
+
+        try await conversationRef.updateData(updateData)
+        print("✅ Updated group permissions")
     }
 
     // MARK: - Message Pinning

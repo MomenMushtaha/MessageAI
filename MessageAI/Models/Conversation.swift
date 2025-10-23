@@ -38,6 +38,9 @@ struct Conversation: Identifiable, Codable, Hashable {
     // Member join dates - maps userId to join date
     var memberJoinDates: [String: Date]?
 
+    // Group permissions
+    var groupPermissions: GroupPermissions?
+
     init(
         id: String,
         type: ConversationType = .direct,
@@ -100,6 +103,24 @@ struct Conversation: Identifiable, Codable, Hashable {
     func joinDate(for userId: String) -> Date? {
         return memberJoinDates?[userId]
     }
+
+    // Helper to check if user can send messages
+    func canSendMessage(_ userId: String) -> Bool {
+        // If admin-only messaging is enabled, only admins can send
+        if groupPermissions?.onlyAdminsCanMessage == true {
+            return isAdmin(userId)
+        }
+        return true
+    }
+
+    // Helper to check if user can add members
+    func canAddMembers(_ userId: String) -> Bool {
+        // If admin-only adding is enabled, only admins can add
+        if groupPermissions?.onlyAdminsCanAddMembers == true {
+            return isAdmin(userId)
+        }
+        return true
+    }
 }
 
 // MARK: - Participant Settings
@@ -111,6 +132,18 @@ struct ParticipantSettings: Codable, Hashable {
     init(isMuted: Bool = false, muteUntil: Date? = nil) {
         self.isMuted = isMuted
         self.muteUntil = muteUntil
+    }
+}
+
+// MARK: - Group Permissions
+
+struct GroupPermissions: Codable, Hashable {
+    var onlyAdminsCanMessage: Bool = false
+    var onlyAdminsCanAddMembers: Bool = false
+
+    init(onlyAdminsCanMessage: Bool = false, onlyAdminsCanAddMembers: Bool = false) {
+        self.onlyAdminsCanMessage = onlyAdminsCanMessage
+        self.onlyAdminsCanAddMembers = onlyAdminsCanAddMembers
     }
 }
 

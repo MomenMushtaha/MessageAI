@@ -57,7 +57,13 @@ struct ConversationDetailView: View {
     @State private var showFullScreenImage = false // Show full-screen image viewer
     @State private var fullScreenImageMessage: Message? // Message for full-screen image
     @Environment(\.dismiss) private var dismiss
-    
+
+    // Computed property to check if user can send messages
+    private var canSendMessage: Bool {
+        guard let currentUserId = authService.currentUser?.id else { return false }
+        return conversation.canSendMessage(currentUserId)
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             // Search bar (appears when searching)
@@ -529,28 +535,36 @@ struct ConversationDetailView: View {
                         .font(.system(size: 22))
                         .foregroundStyle(.blue)
                 }
-                .disabled(isUploadingImage || isSending || isRecordingVoice)
+                .disabled(isUploadingImage || isSending || isRecordingVoice || !canSendMessage)
                 .onChange(of: selectedPhotoItem) { _, newItem in
                     handleMediaSelection(newItem)
                 }
 
                 // Text Field
                 HStack {
-                    TextField("Message", text: $messageText, axis: .vertical)
-                        .lineLimit(1...5)
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 10)
-                        .font(.body)
-                        .disabled(isRecordingVoice)
-                        .onChange(of: messageText) { oldValue, newValue in
-                            handleTypingChange(oldValue: oldValue, newValue: newValue)
-                        }
+                    if canSendMessage {
+                        TextField("Message", text: $messageText, axis: .vertical)
+                            .lineLimit(1...5)
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 10)
+                            .font(.body)
+                            .disabled(isRecordingVoice)
+                            .onChange(of: messageText) { oldValue, newValue in
+                                handleTypingChange(oldValue: oldValue, newValue: newValue)
+                            }
+                    } else {
+                        Text("Only admins can send messages")
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 10)
+                            .font(.body)
+                            .foregroundStyle(.secondary)
+                    }
                 }
                 .background(Color(.systemGray6))
                 .cornerRadius(24)
 
                 // Voice or Send Button
-                if messageText.isEmpty && !isRecordingVoice {
+                if messageText.isEmpty && !isRecordingVoice && canSendMessage {
                     // Voice Recording Button
                     Button(action: {
                         startVoiceRecording()
@@ -566,7 +580,7 @@ struct ConversationDetailView: View {
                         }
                     }
                     .disabled(isUploadingImage || isSending)
-                } else if !isRecordingVoice {
+                } else if !isRecordingVoice && canSendMessage {
                     // Send Button
                     Button(action: {
                         Task {
