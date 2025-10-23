@@ -50,6 +50,8 @@ struct ConversationDetailView: View {
     @State private var reactionPickerPosition: CGPoint = .zero // Position for reaction picker
     @State private var showForwardSheet = false // Show forward message sheet
     @State private var messageToForward: Message? // Message to forward
+    @State private var showFullScreenImage = false // Show full-screen image viewer
+    @State private var fullScreenImageMessage: Message? // Message for full-screen image
     @Environment(\.dismiss) private var dismiss
     
     var body: some View {
@@ -80,6 +82,10 @@ struct ConversationDetailView: View {
                                         onReactionTap: {
                                             reactionPickerMessageId = message.id
                                             showReactionPicker = true
+                                        },
+                                        onImageTap: {
+                                            fullScreenImageMessage = message
+                                            showFullScreenImage = true
                                         }
                                     )
                                     .id(message.id)
@@ -240,6 +246,17 @@ struct ConversationDetailView: View {
                     onDismiss: {
                         showForwardSheet = false
                         messageToForward = nil
+                    }
+                )
+            }
+        }
+        .fullScreenCover(isPresented: $showFullScreenImage) {
+            if let message = fullScreenImageMessage {
+                FullScreenImageView(
+                    message: message,
+                    onDismiss: {
+                        showFullScreenImage = false
+                        fullScreenImageMessage = nil
                     }
                 )
             }
@@ -1065,6 +1082,7 @@ struct MessageBubbleRow: View, Equatable {
     let searchQuery: String?
     let isSearchResult: Bool
     let onReactionTap: () -> Void
+    let onImageTap: () -> Void
 
     // Equatable conformance for performance optimization
     static func == (lhs: MessageBubbleRow, rhs: MessageBubbleRow) -> Bool {
@@ -1101,10 +1119,7 @@ struct MessageBubbleRow: View, Equatable {
                         ImageMessageView(
                             message: message,
                             isFromCurrentUser: isFromCurrentUser,
-                            onTap: {
-                                // TODO: Show full-screen image viewer
-                                print("Image tapped: \(message.id)")
-                            }
+                            onTap: onImageTap
                         )
                         .onTapGesture(count: 2) {
                             onReactionTap()
