@@ -69,19 +69,15 @@ struct MainAppView: View {
         .onChange(of: networkMonitor.isConnected) { oldValue, newValue in
             if !oldValue && newValue && authService.isAuthenticated {
                 // Just came back online and user is authenticated
-                print("🌐 Back online! Syncing pending messages...")
-                Task {
-                    await chatService.syncPendingMessages()
-                }
+                print("🌐 Back online! Messages will sync automatically via listeners")
+                // Note: syncPendingMessages() removed during Realtime Database migration
+                // Listeners will automatically sync when connection is restored
             }
         }
         .onAppear {
             if authService.isAuthenticated && networkMonitor.isConnected && !hasShownInitialSync {
-                // Sync pending messages on app launch
+                // Messages sync automatically via listeners
                 hasShownInitialSync = true
-                Task {
-                    await chatService.syncPendingMessages()
-                }
             }
         }
     }

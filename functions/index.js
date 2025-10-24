@@ -21,10 +21,10 @@ admin.initializeApp();
  * - Sends notification with message preview
  * - Includes conversationId for deep linking
  */
-exports.sendMessageNotification = functions.firestore
-  .document('conversations/{conversationId}/messages/{messageId}')
+exports.sendMessageNotification = functions.database
+  .ref('/conversations/{conversationId}/messages/{messageId}')
   .onCreate(async (snapshot, context) => {
-    const message = snapshot.data();
+    const message = snapshot.val();
     const conversationId = context.params.conversationId;
     const messageId = context.params.messageId;
 
@@ -32,29 +32,26 @@ exports.sendMessageNotification = functions.firestore
 
     try {
       // Get conversation to find participants
-      const conversationRef = admin.firestore()
-        .collection('conversations')
-        .doc(conversationId);
+      const conversationSnapshot = await admin.database()
+        .ref(`conversations/${conversationId}`)
+        .once('value');
 
-      const conversationDoc = await conversationRef.get();
-
-      if (!conversationDoc.exists) {
+      if (!conversationSnapshot.exists()) {
         console.error(`❌ Conversation ${conversationId} not found`);
         return null;
       }
 
-      const conversation = conversationDoc.data();
+      const conversation = conversationSnapshot.val();
       const participantIds = conversation.participantIds || [];
       const senderId = message.senderId;
 
       // Get sender info for notification
-      const senderDoc = await admin.firestore()
-        .collection('users')
-        .doc(senderId)
-        .get();
+      const senderSnapshot = await admin.database()
+        .ref(`users/${senderId}`)
+        .once('value');
 
-      const senderName = senderDoc.exists
-        ? senderDoc.data().displayName
+      const senderName = senderSnapshot.exists()
+        ? senderSnapshot.val().displayName
         : 'Someone';
 
       // Get recipients (exclude sender)
@@ -70,10 +67,12 @@ exports.sendMessageNotification = functions.firestore
       // Increment unread count for all recipients
       const unreadUpdates = {};
       recipientIds.forEach(recipientId => {
-        unreadUpdates[`unreadCounts.${recipientId}`] = admin.firestore.FieldValue.increment(1);
+        unreadUpdates[`unreadCounts/${recipientId}`] = admin.database.ServerValue.increment(1);
       });
 
-      await conversationRef.update(unreadUpdates);
+      await admin.database()
+        .ref(`conversations/${conversationId}`)
+        .update(unreadUpdates);
       console.log('✅ Updated unread counts for recipients');
 
       // Collect FCM tokens and badge counts per recipient
@@ -81,33 +80,37 @@ exports.sendMessageNotification = functions.firestore
 
       for (const recipientId of recipientIds) {
         // Get all FCM tokens for this user
-        const tokensSnapshot = await admin.firestore()
-          .collection('users')
-          .doc(recipientId)
-          .collection('fcmTokens')
-          .get();
+        const tokensSnapshot = await admin.database()
+          .ref(`users/${recipientId}/fcmTokens`)
+          .once('value');
 
         // Calculate badge count for this user
-        const userConversationsSnapshot = await admin.firestore()
-          .collection('conversations')
-          .where('participantIds', 'array-contains', recipientId)
-          .get();
+        const userConversationsSnapshot = await admin.database()
+          .ref('conversations')
+          .orderByChild(`participantIds/${recipientId}`)
+          .equalTo(true)
+          .once('value');
 
         let badgeCount = 0;
-        userConversationsSnapshot.forEach(doc => {
-          const conv = doc.data();
-          const unreadCounts = conv.unreadCounts || {};
-          badgeCount += (unreadCounts[recipientId] || 0);
-        });
-
-        tokensSnapshot.forEach(doc => {
-          const tokenData = doc.data();
-          recipientNotifications.push({
-            token: tokenData.token,
-            badgeCount: badgeCount,
-            recipientId: recipientId,
+        if (userConversationsSnapshot.exists()) {
+          userConversationsSnapshot.forEach(convSnapshot => {
+            const conv = convSnapshot.val();
+            const unreadCounts = conv.unreadCounts || {};
+            badgeCount += (unreadCounts[recipientId] || 0);
           });
-        });
+        }
+
+        if (tokensSnapshot.exists()) {
+          tokensSnapshot.forEach(tokenSnapshot => {
+            const tokenData = tokenSnapshot.val();
+            recipientNotifications.push({
+              token: tokenData.token,
+              badgeCount: badgeCount,
+              recipientId: recipientId,
+              tokenKey: tokenSnapshot.key,
+            });
+          });
+        }
       }
 
       if (recipientNotifications.length === 0) {
@@ -145,10 +148,10 @@ exports.sendMessageNotification = functions.firestore
 
         try {
           await admin.messaging().sendToDevice(recipient.token, payload);
-          return { success: true, token: recipient.token };
+          return { success: true, token: recipient.token, recipientId: recipient.recipientId, tokenKey: recipient.tokenKey };
         } catch (error) {
           console.error(`Error sending to token ${recipient.token}:`, error);
-          return { success: false, token: recipient.token, error: error };
+          return { success: false, token: recipient.token, recipientId: recipient.recipientId, tokenKey: recipient.tokenKey, error: error };
         }
       });
 
@@ -173,27 +176,25 @@ exports.sendMessageNotification = functions.firestore
               error.code === 'messaging/invalid-registration-token' ||
               error.code === 'messaging/registration-token-not-registered'
             ) {
-              tokensToRemove.push(result.token);
+              tokensToRemove.push({
+                recipientId: result.recipientId,
+                tokenKey: result.tokenKey,
+              });
             }
           }
         });
 
-        // Delete invalid tokens from Firestore
+        // Delete invalid tokens from Realtime Database
         if (tokensToRemove.length > 0) {
           console.log(`🗑️ Removing ${tokensToRemove.length} invalid tokens`);
 
-          for (const recipientId of recipientIds) {
-            for (const token of tokensToRemove) {
-              try {
-                await admin.firestore()
-                  .collection('users')
-                  .doc(recipientId)
-                  .collection('fcmTokens')
-                  .doc(token)
-                  .delete();
-              } catch (deleteError) {
-                console.error(`Error deleting token ${token}:`, deleteError);
-              }
+          for (const tokenInfo of tokensToRemove) {
+            try {
+              await admin.database()
+                .ref(`users/${tokenInfo.recipientId}/fcmTokens/${tokenInfo.tokenKey}`)
+                .remove();
+            } catch (deleteError) {
+              console.error(`Error deleting token ${tokenInfo.tokenKey}:`, deleteError);
             }
           }
         }
@@ -216,26 +217,43 @@ exports.cleanupOldTokens = functions.pubsub
   .onRun(async (context) => {
     console.log('🧹 Starting token cleanup...');
 
-    const now = admin.firestore.Timestamp.now();
-    const ninetyDaysAgo = new Date(now.toDate().getTime() - 90 * 24 * 60 * 60 * 1000);
+    const now = Date.now();
+    const ninetyDaysAgo = now - (90 * 24 * 60 * 60 * 1000);
 
     try {
-      const usersSnapshot = await admin.firestore()
-        .collection('users')
-        .get();
+      const usersSnapshot = await admin.database()
+        .ref('users')
+        .once('value');
 
       let deletedCount = 0;
 
-      for (const userDoc of usersSnapshot.docs) {
-        const tokensSnapshot = await userDoc.ref
-          .collection('fcmTokens')
-          .where('createdAt', '<', ninetyDaysAgo)
-          .get();
+      if (usersSnapshot.exists()) {
+        const deletePromises = [];
 
-        for (const tokenDoc of tokensSnapshot.docs) {
-          await tokenDoc.ref.delete();
-          deletedCount++;
-        }
+        usersSnapshot.forEach(userSnapshot => {
+          const userId = userSnapshot.key;
+          const tokensSnapshot = userSnapshot.child('fcmTokens');
+
+          if (tokensSnapshot.exists()) {
+            tokensSnapshot.forEach(tokenSnapshot => {
+              const tokenData = tokenSnapshot.val();
+              const createdAt = tokenData.createdAt || 0;
+
+              if (createdAt < ninetyDaysAgo) {
+                deletePromises.push(
+                  admin.database()
+                    .ref(`users/${userId}/fcmTokens/${tokenSnapshot.key}`)
+                    .remove()
+                    .then(() => {
+                      deletedCount++;
+                    })
+                );
+              }
+            });
+          }
+        });
+
+        await Promise.all(deletePromises);
       }
 
       console.log(`✅ Cleaned up ${deletedCount} old tokens`);

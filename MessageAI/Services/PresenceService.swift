@@ -6,13 +6,13 @@
 //
 
 import Foundation
-import FirebaseFirestore
+import FirebaseDatabase
 import Combine
 import UIKit
 
 @MainActor
 class PresenceService: ObservableObject {
-    private let db = Firestore.firestore()
+    private let db = Database.database().reference()
     private var heartbeatTimer: Timer?
     private var cancellables = Set<AnyCancellable>()
     
@@ -89,10 +89,10 @@ class PresenceService: ObservableObject {
         do {
             let presenceData: [String: Any] = [
                 "isOnline": isOnline,
-                "lastSeen": FieldValue.serverTimestamp()
+                "lastSeen": ServerValue.timestamp()
             ]
             
-            try await db.collection("users").document(userId).updateData(presenceData)
+            try await db.child("users").child(userId).updateChildValues(presenceData)
             print("✅ Updated presence: \(isOnline ? "online" : "offline")")
         } catch {
             print("❌ Error updating presence: \(error.localizedDescription)")
@@ -126,8 +126,8 @@ class PresenceService: ObservableObject {
     
     private func sendHeartbeat(userId: String) async {
         do {
-            try await db.collection("users").document(userId).updateData([
-                "lastSeen": FieldValue.serverTimestamp()
+            try await db.child("users").child(userId).updateChildValues([
+                "lastSeen": ServerValue.timestamp()
             ])
             print("💓 Heartbeat sent")
         } catch {
@@ -137,26 +137,25 @@ class PresenceService: ObservableObject {
     
     // MARK: - Observe User Presence
 
-    func observeUserPresence(userId: String, completion: @escaping (Bool, Date?) -> Void) -> ListenerRegistration {
+    func observeUserPresence(userId: String, completion: @escaping (Bool, Date?) -> Void) -> DatabaseHandle {
         print("👀 Observing presence for user: \(userId)")
 
-        return db.collection("users").document(userId)
-            .addSnapshotListener { snapshot, error in
-                if let error = error {
-                    print("❌ Error observing presence: \(error.localizedDescription)")
-                    return
-                }
-
-                guard let data = snapshot?.data() else {
-                    completion(false, nil)
-                    return
-                }
-
-                let isOnline = data["isOnline"] as? Bool ?? false
-                let lastSeen = (data["lastSeen"] as? Timestamp)?.dateValue()
-
-                completion(isOnline, lastSeen)
+        return db.child("users").child(userId).observe(.value, with: { snapshot in
+            guard let data = snapshot.value as? [String: Any] else {
+                completion(false, nil)
+                return
             }
+
+            let isOnline = data["isOnline"] as? Bool ?? false
+            let lastSeen: Date? = {
+                if let timestamp = data["lastSeen"] as? TimeInterval {
+                    return Date(timeIntervalSince1970: timestamp / 1000)
+                }
+                return nil
+            }()
+
+            completion(isOnline, lastSeen)
+        })
     }
 
     // MARK: - Typing Indicators
@@ -174,14 +173,14 @@ class PresenceService: ObservableObject {
                 "userId": userId,
                 "conversationId": conversationId,
                 "isTyping": true,
-                "lastTypingAt": FieldValue.serverTimestamp()
+                "lastTypingAt": ServerValue.timestamp()
             ]
 
-            try await db.collection("conversations")
-                .document(conversationId)
-                .collection("typing")
-                .document(userId)
-                .setData(typingData, merge: true)
+            try await db.child("conversations")
+                .child(conversationId)
+                .child("typing")
+                .child(userId)
+                .setValue(typingData)
 
             // Record typing indicator sent
             await RateLimiter.shared.recordTypingIndicatorSent()
@@ -196,14 +195,14 @@ class PresenceService: ObservableObject {
         do {
             let typingData: [String: Any] = [
                 "isTyping": false,
-                "lastTypingAt": FieldValue.serverTimestamp()
+                "lastTypingAt": ServerValue.timestamp()
             ]
 
-            try await db.collection("conversations")
-                .document(conversationId)
-                .collection("typing")
-                .document(userId)
-                .setData(typingData, merge: true)
+            try await db.child("conversations")
+                .child(conversationId)
+                .child("typing")
+                .child(userId)
+                .updateChildValues(typingData)
 
             print("⌨️ Stopped typing in conversation: \(conversationId)")
         } catch {
@@ -211,40 +210,44 @@ class PresenceService: ObservableObject {
         }
     }
 
-    func observeTypingStatus(conversationId: String, currentUserId: String, completion: @escaping ([TypingStatus]) -> Void) -> ListenerRegistration {
+    func observeTypingStatus(conversationId: String, currentUserId: String, completion: @escaping ([TypingStatus]) -> Void) -> DatabaseHandle {
         print("👀 Observing typing status for conversation: \(conversationId)")
 
-        return db.collection("conversations")
-            .document(conversationId)
-            .collection("typing")
-            .addSnapshotListener { snapshot, error in
-                if let error = error {
-                    print("❌ Error observing typing status: \(error.localizedDescription)")
+        return db.child("conversations")
+            .child(conversationId)
+            .child("typing")
+            .observe(.value, with: { snapshot in
+                guard let typingDict = snapshot.value as? [String: [String: Any]] else {
                     completion([])
                     return
                 }
 
-                guard let documents = snapshot?.documents else {
-                    completion([])
-                    return
-                }
-
-                let typingStatuses = documents.compactMap { doc -> TypingStatus? in
-                    do {
-                        let status = try doc.data(as: TypingStatus.self)
-                        // Filter out current user and expired statuses
-                        if status.id != currentUserId && status.isActivelyTyping {
-                            return status
-                        }
-                        return nil
-                    } catch {
-                        print("❌ Error decoding typing status: \(error.localizedDescription)")
+                let typingStatuses = typingDict.compactMap { (userId, data) -> TypingStatus? in
+                    guard userId != currentUserId,
+                          let isTyping = data["isTyping"] as? Bool,
+                          isTyping,
+                          let lastTypingTimestamp = data["lastTypingAt"] as? TimeInterval else {
                         return nil
                     }
+                    
+                    let lastTypingAt = Date(timeIntervalSince1970: lastTypingTimestamp / 1000)
+                    
+                    // Check if typing is still active (within last 5 seconds)
+                    let isActive = Date().timeIntervalSince(lastTypingAt) < 5
+                    
+                    if isActive {
+                        return TypingStatus(
+                            id: userId,
+                            conversationId: conversationId,
+                            isTyping: isTyping,
+                            lastTypingAt: lastTypingAt
+                        )
+                    }
+                    return nil
                 }
 
                 completion(typingStatuses)
-            }
+            })
     }
 
     deinit {

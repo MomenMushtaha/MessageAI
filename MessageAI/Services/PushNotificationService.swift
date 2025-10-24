@@ -8,14 +8,15 @@
 import Foundation
 import Combine
 import FirebaseMessaging
-import FirebaseFirestore
+import FirebaseDatabase
 import UserNotifications
+import UIKit
 
 @MainActor
 class PushNotificationService: NSObject, ObservableObject {
     static let shared = PushNotificationService()
 
-    private let db = Firestore.firestore()
+    private let db = Database.database().reference()
     @Published var fcmToken: String?
     @Published var notificationPermissionGranted = false
 
@@ -71,24 +72,24 @@ class PushNotificationService: NSObject, ObservableObject {
         }
     }
 
-    /// Store FCM token in Firestore for this user
+    /// Store FCM token in Realtime Database for this user
     private func storeToken(_ token: String, for userId: String) async {
         do {
             let tokenData: [String: Any] = [
                 "token": token,
-                "createdAt": FieldValue.serverTimestamp(),
+                "createdAt": ServerValue.timestamp(),
                 "platform": "iOS",
                 "appVersion": Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "unknown"
             ]
 
             // Store in user's tokens subcollection
-            try await db.collection("users")
-                .document(userId)
-                .collection("fcmTokens")
-                .document(token)
-                .setData(tokenData, merge: true)
+            try await db.child("users")
+                .child(userId)
+                .child("fcmTokens")
+                .child(token)
+                .setValue(tokenData)
 
-            print("✅ FCM token stored in Firestore")
+            print("✅ FCM token stored in Realtime Database")
         } catch {
             print("❌ Error storing FCM token: \(error.localizedDescription)")
         }
@@ -99,11 +100,11 @@ class PushNotificationService: NSObject, ObservableObject {
         guard let token = fcmToken else { return }
 
         do {
-            try await db.collection("users")
-                .document(userId)
-                .collection("fcmTokens")
-                .document(token)
-                .delete()
+            try await db.child("users")
+                .child(userId)
+                .child("fcmTokens")
+                .child(token)
+                .removeValue()
 
             // Delete from FCM
             try await Messaging.messaging().deleteToken()

@@ -85,11 +85,15 @@ struct AudioMessageView: View {
         .background(backgroundColor)
         .cornerRadius(16)
         .onAppear {
-            // Auto-download audio (you can make this optional)
+            // Auto-download if URL is already present; otherwise wait for update
             if localURL == nil && !isLoading {
-                Task {
-                    await downloadAudio()
-                }
+                Task { await tryStartDownloadIfPossible() }
+            }
+        }
+        .onChange(of: message.mediaURL ?? "") { _ in
+            // When the message updates with a mediaURL, attempt download
+            if localURL == nil && !isLoading {
+                Task { await tryStartDownloadIfPossible() }
             }
         }
         .alert("Error", isPresented: $showError) {
@@ -126,12 +130,13 @@ struct AudioMessageView: View {
         }
     }
 
+    private func tryStartDownloadIfPossible() async {
+        guard message.mediaURL != nil else { return }
+        await downloadAudio()
+    }
+
     private func downloadAudio() async {
-        guard let audioURLString = message.mediaURL else {
-            errorMessage = "Audio URL not available"
-            showError = true
-            return
-        }
+        guard let audioURLString = message.mediaURL else { return }
 
         guard let audioURL = URL(string: audioURLString) else {
             errorMessage = "Invalid audio URL"

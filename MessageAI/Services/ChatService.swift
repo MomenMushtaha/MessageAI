@@ -6,9 +6,10 @@
 //
 
 import Foundation
-import FirebaseFirestore
+import FirebaseDatabase
 import FirebaseStorage
 import Combine
+import UIKit
 
 @MainActor
 class ChatService: ObservableObject {
@@ -16,9 +17,9 @@ class ChatService: ObservableObject {
     @Published var messages: [String: [Message]] = [:] // conversationId -> messages
     @Published var allUsers: [User] = []
 
-    private let db = Firestore.firestore()
-    private var conversationsListener: ListenerRegistration?
-    private var messageListeners: [String: ListenerRegistration] = [:]
+    private let db = Database.database().reference()
+    private var conversationsListener: DatabaseHandle?
+    private var messageListeners: [String: DatabaseHandle] = [:]
     private var conversationUpdateTask: Task<Void, Never>?
     private var messageUpdateTasks: [String: Task<Void, Never>] = [:]
 
@@ -41,20 +42,29 @@ class ChatService: ObservableObject {
     func fetchAllUsers(excludingUserId: String) async {
         do {
             print("👥 Fetching all users...")
-            let snapshot = try await db.collection("users").getDocuments()
+            let snapshot = try await db.child("users").getData()
             
-            allUsers = snapshot.documents.compactMap { doc -> User? in
-                let data = doc.data()
-                guard doc.documentID != excludingUserId else { return nil }
+            guard let usersDict = snapshot.value as? [String: [String: Any]] else {
+                print("⚠️ No users found")
+                return
+            }
+            
+            allUsers = usersDict.compactMap { (userId, data) -> User? in
+                guard userId != excludingUserId else { return nil }
                 
                 return User(
-                    id: data["id"] as? String ?? doc.documentID,
+                    id: data["id"] as? String ?? userId,
                     displayName: data["displayName"] as? String ?? "Unknown",
                     email: data["email"] as? String ?? "",
                     avatarURL: data["avatarURL"] as? String,
-                    createdAt: (data["createdAt"] as? Timestamp)?.dateValue() ?? Date(),
+                    createdAt: Date(timeIntervalSince1970: (data["createdAt"] as? TimeInterval ?? 0) / 1000),
                     isOnline: data["isOnline"] as? Bool ?? false,
-                    lastSeen: (data["lastSeen"] as? Timestamp)?.dateValue()
+                    lastSeen: {
+                        if let timestamp = data["lastSeen"] as? TimeInterval {
+                            return Date(timeIntervalSince1970: timestamp / 1000)
+                        }
+                        return nil
+                    }()
                 )
             }
             
@@ -72,21 +82,10 @@ class ChatService: ObservableObject {
     func observeConversations(userId: String) {
         print("👂 Starting to observe conversations for user: \(userId)")
         
-        conversationsListener = db.collection("conversations")
-            .whereField("participantIds", arrayContains: userId)
-            .order(by: "lastMessageAt", descending: true)
-            .addSnapshotListener { [weak self] snapshot, error in
+        conversationsListener = db.child("conversations")
+            .queryOrdered(byChild: "lastMessageAt")
+            .observe(.value, with: { [weak self] snapshot in
                 guard let self = self else { return }
-                
-                if let error = error {
-                    print("❌ Error observing conversations: \(error.localizedDescription)")
-                    return
-                }
-                
-                guard let documents = snapshot?.documents else {
-                    print("⚠️ No conversations found")
-                    return
-                }
                 
                 Task { @MainActor [weak self] in
                     guard let self = self else { return }
@@ -97,40 +96,54 @@ class ChatService: ObservableObject {
                     // Add small delay to debounce rapid updates
                     try? await Task.sleep(nanoseconds: 50_000_000) // 50ms
                     
-                    let conversations = documents.compactMap { doc -> Conversation? in
-                        let data = doc.data()
+                    guard let conversationsDict = snapshot.value as? [String: [String: Any]] else {
+                        print("⚠️ No conversations found")
+                        return
+                    }
+                    
+                    let conversations = conversationsDict.compactMap { (convId, data) -> Conversation? in
+                        guard let participantIds = data["participantIds"] as? [String],
+                              participantIds.contains(userId) else {
+                            return nil
+                        }
 
                         return Conversation(
-                            id: doc.documentID,
+                            id: convId,
                             type: ConversationType(rawValue: data["type"] as? String ?? "direct") ?? .direct,
-                            participantIds: data["participantIds"] as? [String] ?? [],
+                            participantIds: participantIds,
                             lastMessageText: data["lastMessageText"] as? String,
-                            lastMessageAt: (data["lastMessageAt"] as? Timestamp)?.dateValue(),
+                            lastMessageAt: {
+                                if let timestamp = data["lastMessageAt"] as? TimeInterval {
+                                    return Date(timeIntervalSince1970: timestamp / 1000)
+                                }
+                                return nil
+                            }(),
                             groupName: data["groupName"] as? String,
                             groupAvatarURL: data["groupAvatarURL"] as? String,
-                            createdAt: (data["createdAt"] as? Timestamp)?.dateValue() ?? Date()
+                            createdAt: Date(timeIntervalSince1970: (data["createdAt"] as? TimeInterval ?? 0) / 1000)
                         )
-                    }
+                    }.sorted { ($0.lastMessageAt ?? $0.createdAt) > ($1.lastMessageAt ?? $1.createdAt) }
 
                     // Check if conversations have actually changed
                     let conversationIds = Set(conversations.map { $0.id })
                     let existingIds = Set(self.conversations.map { $0.id })
                     let hasNewConversations = conversationIds != existingIds
                     let countChanged = conversations.count != self.conversations.count
-                    let timestampChanged = conversations.first?.lastMessageAt != self.conversations.first?.lastMessageAt
 
-                    // Update if there are new conversations, count changed, or timestamp changed
-                    if hasNewConversations || countChanged || timestampChanged {
+                    // Update if there are new conversations or count changed
+                    if hasNewConversations || countChanged {
                         self.conversations = conversations
                         print("✅ Loaded \(conversations.count) conversations")
                     }
                 }
-            }
+            })
     }
     
     func stopObservingConversations() {
-        conversationsListener?.remove()
+        if let handle = conversationsListener {
+            db.child("conversations").removeObserver(withHandle: handle)
         conversationsListener = nil
+        }
         print("🛑 Stopped observing conversations")
     }
     
@@ -162,50 +175,49 @@ class ChatService: ObservableObject {
             }
         }
         
-        // Then, observe Firestore for updates (limit to recent messages for performance)
-        let listener = db.collection("conversations")
-            .document(conversationId)
-            .collection("messages")
-            .order(by: "createdAt", descending: false)
-            .limit(toLast: messagesPerPage)
-            .addSnapshotListener { [weak self] snapshot, error in
+        // Then, observe Realtime Database for updates (limit to recent messages for performance)
+        let handle = db.child("conversations").child(conversationId).child("messages")
+            .queryLimited(toLast: UInt(messagesPerPage))
+            .observe(.value, with: { [weak self] snapshot in
                 guard let self = self else { return }
                 
-                if let error = error {
-                    print("❌ Error observing messages: \(error.localizedDescription)")
-                    return
-                }
-                
-                guard let documents = snapshot?.documents else {
+                Task.detached(priority: .userInitiated) {
+                    // Parse database snapshot (expensive work off main thread)
+                    guard let messagesDict = snapshot.value as? [String: [String: Any]] else {
                     print("⚠️ No messages found")
                     return
                 }
                 
-                // Process messages off main thread for better performance
-                Task.detached(priority: .userInitiated) {
-                    // Parse Firestore documents (expensive work off main thread)
-                    let firestoreMessages = documents.compactMap { doc -> Message? in
-                        let data = doc.data()
-
+                    let dbMessages = messagesDict.compactMap { (msgId, data) -> Message? in
+                        let editedAtDate: Date? = {
+                            if let timestamp = data["editedAt"] as? TimeInterval { return Date(timeIntervalSince1970: timestamp / 1000) }
+                            return nil
+                        }()
                         return Message(
-                            id: doc.documentID,
+                            id: msgId,
                             conversationId: conversationId,
                             senderId: data["senderId"] as? String ?? "",
                             text: data["text"] as? String ?? "",
-                            createdAt: (data["createdAt"] as? Timestamp)?.dateValue() ?? Date(),
+                            createdAt: Date(timeIntervalSince1970: (data["createdAt"] as? TimeInterval ?? 0) / 1000),
                             status: data["status"] as? String ?? "sent",
                             deliveredTo: data["deliveredTo"] as? [String] ?? [],
                             readBy: data["readBy"] as? [String] ?? [],
                             deletedBy: data["deletedBy"] as? [String],
                             deletedForEveryone: data["deletedForEveryone"] as? Bool,
-                            editedAt: (data["editedAt"] as? Timestamp)?.dateValue(),
-                            editHistory: data["editHistory"] as? [String]
+                            editedAt: editedAtDate,
+                            editHistory: data["editHistory"] as? [String],
+                            reactions: data["reactions"] as? [String: [String]],
+                            mediaType: data["mediaType"] as? String,
+                            mediaURL: data["mediaURL"] as? String,
+                            thumbnailURL: data["thumbnailURL"] as? String,
+                            audioDuration: data["audioDuration"] as? TimeInterval,
+                            videoDuration: data["videoDuration"] as? TimeInterval
                         )
                     }
                     
                     // Save to local storage in background
                     Task.detached(priority: .background) {
-                        for message in firestoreMessages {
+                        for message in dbMessages {
                             try? await LocalStorageService.shared.saveMessage(message, status: message.status, isSynced: true)
                         }
                     }
@@ -220,23 +232,23 @@ class ChatService: ObservableObject {
                         // Create new task for debounced update
                         let updateTask = Task { @MainActor in
                             // Add small delay to debounce rapid updates
-                            try? await Task.sleep(nanoseconds: 100_000_000) // 100ms (increased from 50ms for better batching)
+                            try? await Task.sleep(nanoseconds: 100_000_000) // 100ms
                             
                             guard !Task.isCancelled else { return }
                             
-                            // Merge with local messages (prefer Firestore if synced, keep local if pending)
+                            // Merge with local messages (prefer DB if synced, keep local if pending)
                             let localMessages = self.messages[conversationId] ?? []
                             let pendingMessages = localMessages.filter { $0.status == "sending" || $0.status == "error" }
                             
-                            // Combine: Firestore messages + pending local messages
-                            var mergedMessages = firestoreMessages
+                            // Combine: DB messages + pending local messages
+                            var mergedMessages = dbMessages
                             for pendingMsg in pendingMessages {
                                 if !mergedMessages.contains(where: { $0.id == pendingMsg.id }) {
                                     mergedMessages.append(pendingMsg)
                                 }
                             }
                             
-                            // Sort by date (efficient since likely already sorted)
+                            // Sort by date
                             mergedMessages.sort { $0.createdAt < $1.createdAt }
                             
                             // Check if we need to update (avoid redundant UI updates)
@@ -254,22 +266,11 @@ class ChatService: ObservableObject {
                                 self.messages[conversationId] = mergedMessages
                                 self.messageCache[conversationId] = mergedMessages
                                 self.lastMessageCount[conversationId] = newCount
-                                print("✅ Merged \(mergedMessages.count) messages (Firestore + local)")
+                                print("✅ Merged \(mergedMessages.count) messages (DB + local)")
                                 
                                 // Show notifications for new incoming messages
                                 if !newMessages.isEmpty {
                                     self.showNotificationsForNewMessages(newMessages, conversationId: conversationId)
-                                }
-                            } else {
-                                // Even if count is same, check if status changed (e.g., delivered, read)
-                                let statusChanged = zip(self.messages[conversationId] ?? [], mergedMessages).contains { old, new in
-                                    old.id == new.id && (old.status != new.status || old.deliveredTo != new.deliveredTo || old.readBy != new.readBy)
-                                }
-                                
-                                if statusChanged {
-                                    self.messages[conversationId] = mergedMessages
-                                    self.messageCache[conversationId] = mergedMessages
-                                    print("✅ Updated message statuses")
                                 }
                             }
                         }
@@ -277,106 +278,17 @@ class ChatService: ObservableObject {
                         self.messageUpdateTasks[conversationId] = updateTask
                     }
                 }
-            }
+            })
         
-        messageListeners[conversationId] = listener
+        messageListeners[conversationId] = handle
     }
     
     func stopObservingMessages(conversationId: String) {
-        messageListeners[conversationId]?.remove()
+        if let handle = messageListeners[conversationId] {
+            db.child("conversations").child(conversationId).child("messages").removeObserver(withHandle: handle)
         messageListeners[conversationId] = nil
+        }
         print("🛑 Stopped observing messages for: \(conversationId)")
-    }
-
-    // MARK: - Pagination
-
-    /// Load older messages for a conversation
-    func loadOlderMessages(conversationId: String) async {
-        // Prevent multiple simultaneous loads
-        guard isLoadingMoreMessages[conversationId] != true else {
-            print("⚠️ Already loading more messages")
-            return
-        }
-
-        // Check if there are more messages to load
-        guard hasMoreMessages[conversationId] != false else {
-            print("📭 No more messages to load")
-            return
-        }
-
-        isLoadingMoreMessages[conversationId] = true
-
-        do {
-            // Get oldest message timestamp
-            let currentMessages = messages[conversationId] ?? []
-            guard let oldestMessage = currentMessages.first else {
-                print("⚠️ No current messages found")
-                isLoadingMoreMessages[conversationId] = false
-                hasMoreMessages[conversationId] = false
-                return
-            }
-
-            print("📥 Loading messages before \(oldestMessage.createdAt)")
-
-            // Query for older messages
-            let snapshot = try await db.collection("conversations")
-                .document(conversationId)
-                .collection("messages")
-                .order(by: "createdAt", descending: true)
-                .start(after: [Timestamp(date: oldestMessage.createdAt)])
-                .limit(to: messagesPerPage)
-                .getDocuments()
-
-            let olderMessages = snapshot.documents.compactMap { doc -> Message? in
-                let data = doc.data()
-
-                return Message(
-                    id: doc.documentID,
-                    conversationId: conversationId,
-                    senderId: data["senderId"] as? String ?? "",
-                    text: data["text"] as? String ?? "",
-                    createdAt: (data["createdAt"] as? Timestamp)?.dateValue() ?? Date(),
-                    status: data["status"] as? String ?? "sent",
-                    deliveredTo: data["deliveredTo"] as? [String] ?? [],
-                    readBy: data["readBy"] as? [String] ?? [],
-                    deletedBy: data["deletedBy"] as? [String],
-                    deletedForEveryone: data["deletedForEveryone"] as? Bool,
-                    editedAt: (data["editedAt"] as? Timestamp)?.dateValue(),
-                    editHistory: data["editHistory"] as? [String],
-                    reactions: data["reactions"] as? [String: [String]],
-                    mediaType: data["mediaType"] as? String,
-                    mediaURL: data["mediaURL"] as? String,
-                    thumbnailURL: data["thumbnailURL"] as? String
-                )
-            }
-
-            print("✅ Loaded \(olderMessages.count) older messages")
-
-            // Check if there are more messages
-            hasMoreMessages[conversationId] = olderMessages.count == messagesPerPage
-
-            // Merge with existing messages
-            if !olderMessages.isEmpty {
-                var updatedMessages = currentMessages
-                updatedMessages.insert(contentsOf: olderMessages, at: 0)
-                updatedMessages.sort { $0.createdAt < $1.createdAt }
-
-                messages[conversationId] = updatedMessages
-                messageCache[conversationId] = updatedMessages
-
-                // Save to local storage
-                Task.detached(priority: .background) {
-                    for message in olderMessages {
-                        try? await LocalStorageService.shared.saveMessage(message, status: message.status, isSynced: true)
-                    }
-                }
-            }
-
-            isLoadingMoreMessages[conversationId] = false
-        } catch {
-            print("❌ Error loading older messages: \(error.localizedDescription)")
-            isLoadingMoreMessages[conversationId] = false
-        }
     }
 
     // MARK: - Show Notifications for New Messages
@@ -414,171 +326,6 @@ class ChatService: ObservableObject {
             }
         }
     }
-    
-    // MARK: - Mark Messages as Delivered
-    
-    func markMessagesAsDelivered(conversationId: String, userId: String) async {
-        print("📬 Marking messages as delivered for user: \(userId)")
-        
-        do {
-            // Get all messages in conversation that are not from this user
-            let messagesSnapshot = try await db.collection("conversations")
-                .document(conversationId)
-                .collection("messages")
-                .whereField("senderId", isNotEqualTo: userId)
-                .getDocuments()
-            
-            let batch = db.batch()
-            var updateCount = 0
-            
-            for doc in messagesSnapshot.documents {
-                let data = doc.data()
-                let deliveredTo = data["deliveredTo"] as? [String] ?? []
-                
-                // Only update if not already delivered to this user
-                if !deliveredTo.contains(userId) {
-                    let messageRef = db.collection("conversations")
-                        .document(conversationId)
-                        .collection("messages")
-                        .document(doc.documentID)
-                    
-                    batch.updateData([
-                        "deliveredTo": FieldValue.arrayUnion([userId])
-                    ], forDocument: messageRef)
-                    updateCount += 1
-                }
-            }
-            
-            if updateCount > 0 {
-                try await batch.commit()
-                print("✅ Marked \(updateCount) messages as delivered")
-            }
-        } catch {
-            print("❌ Error marking messages as delivered: \(error.localizedDescription)")
-        }
-    }
-    
-    // MARK: - Mark Messages as Read
-    
-    func markMessagesAsRead(conversationId: String, userId: String) async {
-        print("👁️ Marking messages as read for user: \(userId)")
-
-        // Check if user has read receipts enabled
-        let userDoc = try? await db.collection("users").document(userId).getDocument()
-        let user = try? userDoc?.data(as: User.self)
-
-        // If read receipts are disabled, don't mark as read (but still mark as delivered)
-        let shouldMarkAsRead = user?.showsReadReceipts ?? true
-
-        do {
-            // Get all messages in conversation that are not from this user
-            let messagesSnapshot = try await db.collection("conversations")
-                .document(conversationId)
-                .collection("messages")
-                .whereField("senderId", isNotEqualTo: userId)
-                .getDocuments()
-            
-            let batch = db.batch()
-            var updateCount = 0
-            
-            for doc in messagesSnapshot.documents {
-                let data = doc.data()
-                let readBy = data["readBy"] as? [String] ?? []
-                let deliveredTo = data["deliveredTo"] as? [String] ?? []
-                
-                // Only update if not already processed by this user
-                if !readBy.contains(userId) || (!deliveredTo.contains(userId)) {
-                    let messageRef = db.collection("conversations")
-                        .document(conversationId)
-                        .collection("messages")
-                        .document(doc.documentID)
-
-                    var updates: [String: Any] = [:]
-
-                    // Only mark as read if privacy setting allows
-                    if shouldMarkAsRead && !readBy.contains(userId) {
-                        updates["readBy"] = FieldValue.arrayUnion([userId])
-                    }
-
-                    // Always mark as delivered regardless of privacy
-                    if !deliveredTo.contains(userId) {
-                        updates["deliveredTo"] = FieldValue.arrayUnion([userId])
-                    }
-
-                    if !updates.isEmpty {
-                        batch.updateData(updates, forDocument: messageRef)
-                        updateCount += 1
-                    }
-                }
-            }
-            
-            if updateCount > 0 {
-                try await batch.commit()
-                print("✅ Marked \(updateCount) messages as read")
-
-                // Update badge count after marking messages as read
-                await updateBadgeCount(for: userId)
-
-                // Clear unread count for this conversation
-                await clearUnreadCount(conversationId: conversationId, userId: userId)
-            }
-        } catch {
-            print("❌ Error marking messages as read: \(error.localizedDescription)")
-        }
-    }
-
-    // MARK: - Badge Count Management
-
-    /// Calculate total unread message count for a user
-    func calculateTotalUnreadCount(for userId: String) async -> Int {
-        var totalUnread = 0
-
-        for conversation in conversations {
-            totalUnread += conversation.unreadCount(for: userId)
-        }
-
-        return totalUnread
-    }
-
-    /// Update app badge count
-    func updateBadgeCount(for userId: String) async {
-        let unreadCount = await calculateTotalUnreadCount(for: userId)
-        await PushNotificationService.shared.updateBadgeCount(unreadCount)
-        print("🔴 Badge count updated to: \(unreadCount)")
-    }
-
-    /// Clear unread count for a specific conversation
-    private func clearUnreadCount(conversationId: String, userId: String) async {
-        do {
-            try await db.collection("conversations")
-                .document(conversationId)
-                .updateData([
-                    "unreadCounts.\(userId)": 0
-                ])
-            print("✅ Cleared unread count for conversation \(conversationId)")
-        } catch {
-            print("❌ Error clearing unread count: \(error.localizedDescription)")
-        }
-    }
-
-    /// Increment unread count when a new message is received
-    func incrementUnreadCount(conversationId: String, recipientIds: [String]) async {
-        do {
-            var updates: [String: Any] = [:]
-
-            for recipientId in recipientIds {
-                updates["unreadCounts.\(recipientId)"] = FieldValue.increment(Int64(1))
-            }
-
-            try await db.collection("conversations")
-                .document(conversationId)
-                .updateData(updates)
-
-            print("✅ Incremented unread count for \(recipientIds.count) recipients")
-        } catch {
-            print("❌ Error incrementing unread count: \(error.localizedDescription)")
-        }
-    }
 
     // MARK: - Send Message
     
@@ -598,13 +345,6 @@ class ChatService: ObservableObject {
 
         guard trimmedText.count <= 4096 else {
             throw ChatError.messageTooLong
-        }
-
-        // Check group permissions (if applicable)
-        if let conversation = conversations.first(where: { $0.id == conversationId }),
-           conversation.type == .group,
-           !conversation.canSendMessage(senderId) {
-            throw NSError(domain: "ChatService", code: 403, userInfo: [NSLocalizedDescriptionKey: "Only admins can send messages in this group"])
         }
 
         // Record message sent for rate limiting
@@ -642,39 +382,32 @@ class ChatService: ObservableObject {
             try? await LocalStorageService.shared.saveMessage(localMessage, status: "sending", isSynced: false)
         }
         
-        // Prepare Firestore data
+        // Prepare database data
         let messageData: [String: Any] = [
             "senderId": senderId,
             "text": trimmedText,
-            "createdAt": FieldValue.serverTimestamp(),
+            "createdAt": ServerValue.timestamp(),
             "status": "sent",
             "deliveredTo": [], // Will be populated as recipients receive
             "readBy": [] // Will be populated as recipients read
         ]
         
-        let conversationRef = db.collection("conversations").document(conversationId)
-        let messageRef = conversationRef.collection("messages").document(messageId)
+        let conversationRef = db.child("conversations").child(conversationId)
+        let messageRef = conversationRef.child("messages").child(messageId)
         
-        // Use batch write to update conversation and add message atomically
-        let batch = db.batch()
-        
-        // Add message
-        batch.setData(messageData, forDocument: messageRef)
+        do {
+            // Write message
+            try await messageRef.setValue(messageData)
         
         // Update conversation's last message
         let conversationUpdate: [String: Any] = [
             "lastMessageText": trimmedText,
-            "lastMessageAt": FieldValue.serverTimestamp()
+                "lastMessageAt": ServerValue.timestamp()
         ]
-        batch.updateData(conversationUpdate, forDocument: conversationRef)
+            try await conversationRef.updateChildValues(conversationUpdate)
         
-        do {
-            // Use retry logic for the batch commit
-            try await ErrorRecoveryService.shared.retryWithExponentialBackoff {
-                try await batch.commit()
-            }
             let duration = Date().timeIntervalSince(startTime)
-            print("✅ Message sent to Firestore in \(Int(duration * 1000))ms")
+            print("✅ Message sent to Realtime Database in \(Int(duration * 1000))ms")
             
             // Complete performance tracking (success)
             await PerformanceMonitor.shared.completeMessageSend(messageId: messageId, success: true)
@@ -702,7 +435,7 @@ class ChatService: ObservableObject {
             }
             
         } catch {
-            print("❌ Error sending message to Firestore: \(error.localizedDescription)")
+            print("❌ Error sending message to Realtime Database: \(error.localizedDescription)")
             
             // Complete performance tracking (failure)
             await PerformanceMonitor.shared.completeMessageSend(messageId: messageId, success: false)
@@ -733,395 +466,6 @@ class ChatService: ObservableObject {
         }
     }
 
-    // MARK: - Send Image Message
-
-    /// Send an image message with upload progress
-    func sendImageMessage(
-        conversationId: String,
-        senderId: String,
-        image: UIImage,
-        progressHandler: ((Double) -> Void)? = nil
-    ) async throws {
-        let startTime = Date()
-        print("📷 Sending image message to conversation: \(conversationId)")
-
-        // Generate message ID upfront
-        let messageId = UUID().uuidString
-        let createdAt = Date()
-
-        // Start performance tracking
-        await PerformanceMonitor.shared.startMessageSend(messageId: messageId)
-
-        // Create local message immediately (optimistic UI)
-        let localMessage = Message(
-            id: messageId,
-            conversationId: conversationId,
-            senderId: senderId,
-            text: "",
-            createdAt: createdAt,
-            status: "sending",
-            mediaType: "image"
-        )
-
-        // Update UI immediately (optimistic update)
-        var currentMessages = messages[conversationId] ?? []
-        currentMessages.append(localMessage)
-        messages[conversationId] = currentMessages
-        messageCache[conversationId] = currentMessages
-        lastMessageCount[conversationId] = currentMessages.count
-
-        // Save to local storage
-        Task.detached(priority: .userInitiated) {
-            try? await LocalStorageService.shared.saveMessage(localMessage, status: "sending", isSynced: false)
-        }
-
-        do {
-            // Upload image to Firebase Storage
-            print("📤 Uploading image to Storage...")
-            let (fullURL, thumbnailURL) = try await MediaService.shared.uploadImage(
-                image,
-                conversationId: conversationId,
-                messageId: messageId,
-                progressHandler: progressHandler
-            )
-
-            print("✅ Image uploaded: \(thumbnailURL)")
-
-            // Prepare Firestore data with media URLs
-            let messageData: [String: Any] = [
-                "senderId": senderId,
-                "text": "",
-                "createdAt": FieldValue.serverTimestamp(),
-                "status": "sent",
-                "deliveredTo": [],
-                "readBy": [],
-                "mediaType": "image",
-                "mediaURL": fullURL,
-                "thumbnailURL": thumbnailURL
-            ]
-
-            let conversationRef = db.collection("conversations").document(conversationId)
-            let messageRef = conversationRef.collection("messages").document(messageId)
-
-            // Use batch write
-            let batch = db.batch()
-
-            // Add message
-            batch.setData(messageData, forDocument: messageRef)
-
-            // Update conversation's last message
-            let conversationUpdate: [String: Any] = [
-                "lastMessageText": "📷 Image",
-                "lastMessageAt": FieldValue.serverTimestamp()
-            ]
-            batch.updateData(conversationUpdate, forDocument: conversationRef)
-
-            try await batch.commit()
-            let duration = Date().timeIntervalSince(startTime)
-            print("✅ Image message sent to Firestore in \(Int(duration * 1000))ms")
-
-            // Complete performance tracking
-            await PerformanceMonitor.shared.completeMessageSend(messageId: messageId, success: true)
-
-            // Update local status
-            Task.detached(priority: .background) {
-                try? await LocalStorageService.shared.updateMessageStatus(messageId, status: "sent", isSynced: true)
-            }
-
-            // Update message in UI with URLs
-            await MainActor.run {
-                if var currentMessages = self.messages[conversationId],
-                   let index = currentMessages.firstIndex(where: { $0.id == messageId }) {
-                    currentMessages[index] = Message(
-                        id: messageId,
-                        conversationId: conversationId,
-                        senderId: senderId,
-                        text: "",
-                        createdAt: createdAt,
-                        status: "sent",
-                        mediaType: "image",
-                        mediaURL: fullURL,
-                        thumbnailURL: thumbnailURL
-                    )
-                    self.messages[conversationId] = currentMessages
-                    self.messageCache[conversationId] = currentMessages
-                }
-            }
-
-        } catch {
-            print("❌ Error sending image message: \(error.localizedDescription)")
-
-            // Complete performance tracking (failure)
-            await PerformanceMonitor.shared.completeMessageSend(messageId: messageId, success: false)
-
-            // Update local status to error
-            Task.detached(priority: .background) {
-                try? await LocalStorageService.shared.updateMessageStatus(messageId, status: "error", isSynced: false)
-            }
-
-            // Update UI to show error
-            await MainActor.run {
-                if var currentMessages = self.messages[conversationId],
-                   let index = currentMessages.firstIndex(where: { $0.id == messageId }) {
-                    currentMessages[index] = Message(
-                        id: messageId,
-                        conversationId: conversationId,
-                        senderId: senderId,
-                        text: "",
-                        createdAt: createdAt,
-                        status: "error",
-                        mediaType: "image"
-                    )
-                    self.messages[conversationId] = currentMessages
-                    self.messageCache[conversationId] = currentMessages
-                }
-            }
-
-            throw error
-        }
-    }
-
-    // MARK: - Send Video Message
-
-    /// Send a video message with upload progress
-    func sendVideoMessage(
-        conversationId: String,
-        senderId: String,
-        videoURL: URL,
-        progressHandler: ((Double) -> Void)? = nil
-    ) async throws {
-        let startTime = Date()
-        print("🎥 Sending video message to conversation: \(conversationId)")
-
-        // Generate message ID upfront
-        let messageId = UUID().uuidString
-        let createdAt = Date()
-
-        // Start performance tracking
-        await PerformanceMonitor.shared.startMessageSend(messageId: messageId)
-
-        // Create local message immediately (optimistic UI)
-        let localMessage = Message(
-            id: messageId,
-            conversationId: conversationId,
-            senderId: senderId,
-            text: "",
-            createdAt: createdAt,
-            status: "sending",
-            mediaType: "video"
-        )
-
-        // Update UI immediately (optimistic update)
-        var currentMessages = messages[conversationId] ?? []
-        currentMessages.append(localMessage)
-        messages[conversationId] = currentMessages
-        messageCache[conversationId] = currentMessages
-        lastMessageCount[conversationId] = currentMessages.count
-
-        // Save to local storage
-        Task.detached(priority: .userInitiated) {
-            try? await LocalStorageService.shared.saveMessage(localMessage, status: "sending", isSynced: false)
-        }
-
-        do {
-            // Upload video to Firebase Storage
-            print("📤 Uploading video to Storage...")
-            let (videoDownloadURL, thumbnailURL, duration) = try await MediaService.shared.uploadVideo(
-                videoURL,
-                conversationId: conversationId,
-                messageId: messageId,
-                progressHandler: progressHandler
-            )
-
-            print("✅ Video uploaded: \(videoDownloadURL)")
-
-            // Prepare Firestore data with media URLs
-            let messageData: [String: Any] = [
-                "senderId": senderId,
-                "text": "",
-                "createdAt": FieldValue.serverTimestamp(),
-                "status": "sent",
-                "deliveredTo": [],
-                "readBy": [],
-                "mediaType": "video",
-                "mediaURL": videoDownloadURL,
-                "thumbnailURL": thumbnailURL,
-                "videoDuration": duration
-            ]
-
-            let conversationRef = db.collection("conversations").document(conversationId)
-            let messageRef = conversationRef.collection("messages").document(messageId)
-
-            // Use batch write
-            let batch = db.batch()
-
-            // Add message
-            batch.setData(messageData, forDocument: messageRef)
-
-            // Update conversation's last message
-            let conversationUpdate: [String: Any] = [
-                "lastMessageText": "🎥 Video",
-                "lastMessageAt": FieldValue.serverTimestamp()
-            ]
-            batch.updateData(conversationUpdate, forDocument: conversationRef)
-
-            try await batch.commit()
-            let uploadDuration = Date().timeIntervalSince(startTime)
-            print("✅ Video message sent to Firestore in \(Int(uploadDuration * 1000))ms")
-
-            // Complete performance tracking
-            await PerformanceMonitor.shared.completeMessageSend(messageId: messageId, success: true)
-
-            // Update local status
-            Task.detached(priority: .background) {
-                try? await LocalStorageService.shared.updateMessageStatus(messageId, status: "sent", isSynced: true)
-            }
-
-            // Update message in UI with URLs
-            await MainActor.run {
-                if var currentMessages = self.messages[conversationId],
-                   let index = currentMessages.firstIndex(where: { $0.id == messageId }) {
-                    currentMessages[index] = Message(
-                        id: messageId,
-                        conversationId: conversationId,
-                        senderId: senderId,
-                        text: "",
-                        createdAt: createdAt,
-                        status: "sent",
-                        mediaType: "video",
-                        mediaURL: videoDownloadURL,
-                        thumbnailURL: thumbnailURL,
-                        videoDuration: duration
-                    )
-                    self.messages[conversationId] = currentMessages
-                    self.messageCache[conversationId] = currentMessages
-                }
-            }
-
-        } catch {
-            print("❌ Error sending video message: \(error.localizedDescription)")
-
-            // Complete performance tracking (failure)
-            await PerformanceMonitor.shared.completeMessageSend(messageId: messageId, success: false)
-
-            // Update local status to error
-            Task.detached(priority: .background) {
-                try? await LocalStorageService.shared.updateMessageStatus(messageId, status: "error", isSynced: false)
-            }
-
-            // Update UI to show error
-            await MainActor.run {
-                if var currentMessages = self.messages[conversationId],
-                   let index = currentMessages.firstIndex(where: { $0.id == messageId }) {
-                    currentMessages[index] = Message(
-                        id: messageId,
-                        conversationId: conversationId,
-                        senderId: senderId,
-                        text: "",
-                        createdAt: createdAt,
-                        status: "error",
-                        mediaType: "video"
-                    )
-                    self.messages[conversationId] = currentMessages
-                    self.messageCache[conversationId] = currentMessages
-                }
-            }
-
-            throw error
-        }
-    }
-
-    // MARK: - Send Voice Message
-
-    /// Send a voice message with upload progress
-    func sendVoiceMessage(
-        conversationId: String,
-        senderId: String,
-        audioData: Data,
-        duration: TimeInterval,
-        progressHandler: ((Double) -> Void)? = nil
-    ) async throws {
-        let messageId = UUID().uuidString
-        let createdAt = Date()
-
-        // Create local message immediately (optimistic UI)
-        let localMessage = Message(
-            id: messageId,
-            conversationId: conversationId,
-            senderId: senderId,
-            text: "",
-            createdAt: createdAt,
-            status: "sending",
-            mediaType: "audio",
-            audioDuration: duration
-        )
-
-        // Update UI immediately
-        var currentMessages = messages[conversationId] ?? []
-        currentMessages.append(localMessage)
-        messages[conversationId] = currentMessages
-
-        do {
-            // Upload audio to Firebase Storage
-            let audioURL = try await MediaService.shared.uploadAudio(
-                audioData,
-                conversationId: conversationId,
-                messageId: messageId,
-                duration: duration,
-                progressHandler: progressHandler
-            )
-
-            // Save to Firestore with audio URL
-            let messageData: [String: Any] = [
-                "senderId": senderId,
-                "text": "",
-                "createdAt": FieldValue.serverTimestamp(),
-                "status": "sent",
-                "deliveredTo": [],
-                "readBy": [],
-                "mediaType": "audio",
-                "mediaURL": audioURL,
-                "audioDuration": duration
-            ]
-
-            let messageRef = db.collection("conversations")
-                .document(conversationId)
-                .collection("messages")
-                .document(messageId)
-
-            let conversationRef = db.collection("conversations").document(conversationId)
-
-            // Batch write: message + conversation update
-            let batch = db.batch()
-            batch.setData(messageData, forDocument: messageRef)
-            batch.updateData([
-                "lastMessageText": "🎤 Voice message",
-                "lastMessageAt": FieldValue.serverTimestamp()
-            ], forDocument: conversationRef)
-
-            try await batch.commit()
-
-            // Update local message status
-            if let index = currentMessages.firstIndex(where: { $0.id == messageId }) {
-                currentMessages[index].status = "sent"
-                currentMessages[index].mediaURL = audioURL
-                messages[conversationId] = currentMessages
-            }
-
-            print("✅ Voice message sent successfully")
-
-        } catch {
-            // Rollback on failure
-            if let index = currentMessages.firstIndex(where: { $0.id == messageId }) {
-                currentMessages[index].status = "failed"
-                messages[conversationId] = currentMessages
-            }
-
-            print("❌ Voice message failed: \(error.localizedDescription)")
-            throw error
-        }
-    }
-
     // MARK: - Create Conversation
     
     func createOrGetConversation(participantIds: [String], type: ConversationType = .direct, groupName: String? = nil) async throws -> String {
@@ -1136,12 +480,12 @@ class ChatService: ObservableObject {
                 return conversationId
             }
             
-            // Check if conversation already exists in Firestore
-            let conversationRef = db.collection("conversations").document(conversationId)
-            let doc = try await conversationRef.getDocument()
+            // Check if conversation already exists in database
+            let conversationRef = db.child("conversations").child(conversationId)
+            let snapshot = try await conversationRef.getData()
             
-            if doc.exists {
-                print("✅ Conversation already exists in Firestore: \(conversationId)")
+            if snapshot.exists() {
+                print("✅ Conversation already exists in database: \(conversationId)")
                 // Add to local array optimistically if not there yet
                 if !conversations.contains(where: { $0.id == conversationId }) {
                     let conversation = Conversation(
@@ -1165,8 +509,8 @@ class ChatService: ObservableObject {
             let conversationData: [String: Any] = [
                 "type": type.rawValue,
                 "participantIds": participantIds,
-                "createdAt": FieldValue.serverTimestamp(),
-                "lastMessageAt": FieldValue.serverTimestamp()
+                "createdAt": ServerValue.timestamp(),
+                "lastMessageAt": ServerValue.timestamp()
             ]
             
             // Optimistically add to local array immediately
@@ -1183,24 +527,24 @@ class ChatService: ObservableObject {
             conversations.insert(optimisticConversation, at: 0)
             print("✅ Optimistically added conversation to local array")
             
-            // Write to Firestore (will be confirmed by listener)
-            try await conversationRef.setData(conversationData)
-            print("✅ Conversation created in Firestore")
+            // Write to database (will be confirmed by listener)
+            try await conversationRef.setValue(conversationData)
+            print("✅ Conversation created in database")
             
             return conversationId
         }
         
         // For group chats, generate random ID
-        let conversationRef = db.collection("conversations").document()
-        let conversationId = conversationRef.documentID
+        let conversationId = UUID().uuidString
+        let conversationRef = db.child("conversations").child(conversationId)
         
         print("📝 Creating new group conversation: \(conversationId)")
         let conversationData: [String: Any] = [
             "type": type.rawValue,
             "participantIds": participantIds,
             "groupName": groupName as Any,
-            "createdAt": FieldValue.serverTimestamp(),
-            "lastMessageAt": FieldValue.serverTimestamp()
+            "createdAt": ServerValue.timestamp(),
+            "lastMessageAt": ServerValue.timestamp()
         ]
         
         // Optimistically add to local array immediately
@@ -1217,324 +561,275 @@ class ChatService: ObservableObject {
         conversations.insert(optimisticConversation, at: 0)
         print("✅ Optimistically added group to local array")
         
-        // Write to Firestore (will be confirmed by listener)
-        try await conversationRef.setData(conversationData)
-        print("✅ Group conversation created in Firestore")
+        // Write to database (will be confirmed by listener)
+        try await conversationRef.setValue(conversationData)
+        print("✅ Group conversation created in database")
         
         return conversationId
     }
     
-    // MARK: - Delete Conversation
+    // MARK: - Mark Messages as Delivered/Read
     
-    /// Deletes a conversation and all its messages
-    func deleteConversation(conversationId: String) async throws {
-        print("🗑️ Deleting conversation: \(conversationId)")
-        
-        // Optimistically remove from local array first for instant UI feedback
-        conversations.removeAll { $0.id == conversationId }
-        messages.removeValue(forKey: conversationId)
-        
-        // Stop listening to messages for this conversation
-        if let listener = messageListeners[conversationId] {
-            listener.remove()
-            messageListeners.removeValue(forKey: conversationId)
-        }
+    func markMessagesAsDelivered(conversationId: String, userId: String) async {
+        print("📬 Marking messages as delivered for user: \(userId)")
         
         do {
-            // Delete all messages in the conversation
-            let messagesSnapshot = try await db.collection("conversations")
-                .document(conversationId)
-                .collection("messages")
-                .getDocuments()
+            let messagesSnapshot = try await db.child("conversations")
+                .child(conversationId)
+                .child("messages")
+                .getData()
             
-            // Batch delete messages for efficiency
-            let batch = db.batch()
-            for document in messagesSnapshot.documents {
-                batch.deleteDocument(document.reference)
-            }
-            try await batch.commit()
-            print("✅ Deleted \(messagesSnapshot.documents.count) messages")
-            
-            // Delete the conversation document
-            try await db.collection("conversations").document(conversationId).delete()
-            print("✅ Conversation deleted successfully")
-            
-            // Clear local storage for this conversation (on main actor)
-            await MainActor.run {
-                try? LocalStorageService.shared.deleteMessages(for: conversationId)
-                try? LocalStorageService.shared.deleteConversation(id: conversationId)
+            guard let messagesDict = messagesSnapshot.value as? [String: [String: Any]] else {
+                print("⚠️ No messages found")
+                return
             }
             
+            var updateCount = 0
+            
+            for (messageId, messageData) in messagesDict {
+                let senderId = messageData["senderId"] as? String ?? ""
+                
+                // Only mark messages not from this user
+                guard senderId != userId else { continue }
+                
+                let deliveredTo = messageData["deliveredTo"] as? [String] ?? []
+                
+                // Only update if not already delivered
+                if !deliveredTo.contains(userId) {
+                    var newDeliveredTo = deliveredTo
+                    newDeliveredTo.append(userId)
+                    
+                    try await db.child("conversations")
+                        .child(conversationId)
+                        .child("messages")
+                        .child(messageId)
+                        .child("deliveredTo")
+                        .setValue(newDeliveredTo)
+                    
+                    updateCount += 1
+                }
+            }
+            
+            if updateCount > 0 {
+                print("✅ Marked \(updateCount) messages as delivered")
+            }
         } catch {
-            print("❌ Error deleting conversation: \(error.localizedDescription)")
-            // Re-throw so UI can handle the error
-            throw error
+            print("❌ Error marking messages as delivered: \(error.localizedDescription)")
         }
     }
     
-    // MARK: - Clear Chat History
-    
-    /// Clears chat history locally for the current user only
-    /// Messages remain in Firestore and visible to other participants
-    func clearChatHistory(conversationId: String) async throws {
-        print("🗑️ Clearing chat history for conversation: \(conversationId)")
+    func markMessagesAsRead(conversationId: String, userId: String) async {
+        print("👁️ Marking messages as read for user: \(userId)")
         
-        // Delete local messages only
-        try LocalStorageService.shared.deleteMessages(for: conversationId)
-        
-        // Clear from memory
-        messages[conversationId] = []
-        
-        print("✅ Chat history cleared locally for conversation: \(conversationId)")
+        do {
+            // Check if user has read receipts enabled
+            let userSnapshot = try await db.child("users").child(userId).getData()
+            let userData = userSnapshot.value as? [String: Any]
+            let privacySettings = userData?["privacySettings"] as? [String: Any]
+            let shouldMarkAsRead = privacySettings?["showReadReceipts"] as? Bool ?? true
+            
+            let messagesSnapshot = try await db.child("conversations")
+                .child(conversationId)
+                .child("messages")
+                .getData()
+            
+            guard let messagesDict = messagesSnapshot.value as? [String: [String: Any]] else {
+                print("⚠️ No messages found")
+                return
+            }
+            
+            var updateCount = 0
+            
+            for (messageId, messageData) in messagesDict {
+                let senderId = messageData["senderId"] as? String ?? ""
+                
+                // Only mark messages not from this user
+                guard senderId != userId else { continue }
+                
+                let readBy = messageData["readBy"] as? [String] ?? []
+                let deliveredTo = messageData["deliveredTo"] as? [String] ?? []
+                
+                var updates: [String: Any] = [:]
+                
+                // Mark as read if privacy allows
+                if shouldMarkAsRead && !readBy.contains(userId) {
+                    var newReadBy = readBy
+                    newReadBy.append(userId)
+                    updates["readBy"] = newReadBy
+                }
+                
+                // Always mark as delivered
+                if !deliveredTo.contains(userId) {
+                    var newDeliveredTo = deliveredTo
+                    newDeliveredTo.append(userId)
+                    updates["deliveredTo"] = newDeliveredTo
+                }
+                
+                if !updates.isEmpty {
+                    try await db.child("conversations")
+                        .child(conversationId)
+                        .child("messages")
+                        .child(messageId)
+                        .updateChildValues(updates)
+                    
+                    updateCount += 1
+                }
+            }
+            
+            if updateCount > 0 {
+                print("✅ Marked \(updateCount) messages as read/delivered")
+                
+                // Clear unread count for this conversation
+                try await db.child("conversations")
+                    .child(conversationId)
+                    .child("unreadCounts")
+                    .child(userId)
+                    .setValue(0)
+            }
+        } catch {
+            print("❌ Error marking messages as read: \(error.localizedDescription)")
+        }
     }
     
-    // MARK: - Get User
+    // MARK: - Message Actions
     
-    func getUser(userId: String) async throws -> User? {
-        // Check cache first for better performance
-        if let cachedUser = CacheManager.shared.getCachedUser(id: userId) {
-            return cachedUser
-        }
-        
-        // If not in cache, fetch from Firestore
-        let doc = try await db.collection("users").document(userId).getDocument()
-        
-        guard let data = doc.data() else {
-            return nil
-        }
-        
-        let user = User(
-            id: data["id"] as? String ?? userId,
-            displayName: data["displayName"] as? String ?? "Unknown",
-            email: data["email"] as? String ?? "",
-            avatarURL: data["avatarURL"] as? String,
-            createdAt: (data["createdAt"] as? Timestamp)?.dateValue() ?? Date(),
-            isOnline: data["isOnline"] as? Bool ?? false,
-            lastSeen: (data["lastSeen"] as? Timestamp)?.dateValue()
-        )
-        
-        // Cache for future use
-        CacheManager.shared.cacheUser(user)
-        
-        return user
-    }
-
-    // MARK: - Message Deletion
-
-    /// Delete a message for the current user or for everyone
-    /// - Parameters:
-    ///   - messageId: The ID of the message to delete
-    ///   - conversationId: The conversation containing the message
-    ///   - deleteForEveryone: If true, delete for all users (sender only)
     func deleteMessage(messageId: String, conversationId: String, deleteForEveryone: Bool) async throws {
         guard let currentUserId = AuthService.shared.currentUser?.id else {
             throw NSError(domain: "ChatService", code: 401, userInfo: [NSLocalizedDescriptionKey: "User not authenticated"])
         }
 
-        // Find the message in local cache for optimistic update
-        guard var conversationMessages = messages[conversationId],
-              let messageIndex = conversationMessages.firstIndex(where: { $0.id == messageId }) else {
+        print("🗑️ Deleting message \(messageId) - deleteForEveryone: \(deleteForEveryone)")
+        
+        let messageRef = db.child("conversations")
+            .child(conversationId)
+            .child("messages")
+            .child(messageId)
+        
+        // Get current message to validate permissions
+        let snapshot = try await messageRef.getData()
+        guard let messageData = snapshot.value as? [String: Any] else {
             throw NSError(domain: "ChatService", code: 404, userInfo: [NSLocalizedDescriptionKey: "Message not found"])
         }
 
-        // Store original message for rollback
-        let originalMessage = conversationMessages[messageIndex]
-
-        // OPTIMISTIC UPDATE: Modify local state immediately
-        var updatedMessage = originalMessage
+        let senderId = messageData["senderId"] as? String ?? ""
 
         if deleteForEveryone {
-            // Verify user is the sender (permission check)
-            guard originalMessage.senderId == currentUserId else {
+            // Only sender can delete for everyone
+            guard senderId == currentUserId else {
                 throw NSError(domain: "ChatService", code: 403, userInfo: [NSLocalizedDescriptionKey: "Only the sender can delete for everyone"])
             }
 
-            updatedMessage.text = "[Message deleted]"
-            updatedMessage.deletedForEveryone = true
-        }
-
-        updatedMessage.deletedBy = (updatedMessage.deletedBy ?? []) + [currentUserId]
-        conversationMessages[messageIndex] = updatedMessage
-        messages[conversationId] = conversationMessages
-
-        print("🔄 Optimistically updated message \(messageId)")
-
-        // Now update Firestore in background
-        let messageRef = db.collection("conversations")
-            .document(conversationId)
-            .collection("messages")
-            .document(messageId)
-
-        do {
-            // Use retry logic with rollback on failure
-            try await ErrorRecoveryService.shared.executeWithRollback(
-                operation: {
-                    if deleteForEveryone {
-                        print("🗑️ Deleting message \(messageId) for everyone")
-
-                        try await messageRef.updateData([
+            try await messageRef.updateChildValues([
                             "text": "[Message deleted]",
                             "deletedForEveryone": true,
-                            "deletedBy": FieldValue.arrayUnion([currentUserId])
+                "deletedBy": [currentUserId]
                         ])
 
-                                print("✅ Message deleted for everyone - confirmed by server")
+            print("✅ Message deleted for everyone")
                     } else {
-                        print("🗑️ Marking message \(messageId) as deleted for user \(currentUserId)")
-
-                        try await messageRef.updateData([
-                            "deletedBy": FieldValue.arrayUnion([currentUserId])
-                        ])
-
-                        print("✅ Message marked as deleted for current user - confirmed by server")
-                    }
-                },
-                rollback: {
-                    // Rollback: Restore original message on failure
-                    print("❌ Deletion failed, executing rollback")
-
-                    guard var messages = self.messages[conversationId],
-                          let index = messages.firstIndex(where: { $0.id == messageId }) else {
-                        return
-                    }
-
-                    messages[index] = originalMessage
-                    self.messages[conversationId] = messages
+            // Mark as deleted for current user only
+            var deletedBy = messageData["deletedBy"] as? [String] ?? []
+            if !deletedBy.contains(currentUserId) {
+                deletedBy.append(currentUserId)
+            }
+            
+            try await messageRef.child("deletedBy").setValue(deletedBy)
+            
+            print("✅ Message marked as deleted for current user")
+        }
+        
+        // Update local cache
+        await MainActor.run {
+            if var conversationMessages = messages[conversationId],
+               let index = conversationMessages.firstIndex(where: { $0.id == messageId }) {
+                var updatedMessage = conversationMessages[index]
+                if deleteForEveryone {
+                    updatedMessage.text = "[Message deleted]"
+                    updatedMessage.deletedForEveryone = true
                 }
-            )
-
-        } catch {
-            // Error already logged and rolled back by executeWithRollback
-            throw error
+                updatedMessage.deletedBy = (updatedMessage.deletedBy ?? []) + [currentUserId]
+                conversationMessages[index] = updatedMessage
+                messages[conversationId] = conversationMessages
+            }
         }
     }
-
-    // MARK: - Message Editing
-
-    /// Edit a message's text content
-    /// - Parameters:
-    ///   - messageId: The ID of the message to edit
-    ///   - conversationId: The conversation containing the message
-    ///   - newText: The new text content for the message
+    
     func editMessage(messageId: String, conversationId: String, newText: String) async throws {
         guard let currentUserId = AuthService.shared.currentUser?.id else {
             throw NSError(domain: "ChatService", code: 401, userInfo: [NSLocalizedDescriptionKey: "User not authenticated"])
         }
 
-        // Validate new text is not empty
         let trimmedText = newText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedText.isEmpty else {
             throw NSError(domain: "ChatService", code: 400, userInfo: [NSLocalizedDescriptionKey: "Message cannot be empty"])
         }
 
-        // Find message in local cache for optimistic update
-        guard var conversationMessages = messages[conversationId],
-              let messageIndex = conversationMessages.firstIndex(where: { $0.id == messageId }) else {
+        print("✏️ Editing message \(messageId)")
+        
+        let messageRef = db.child("conversations")
+            .child(conversationId)
+            .child("messages")
+            .child(messageId)
+        
+        // Get current message
+        let snapshot = try await messageRef.getData()
+        guard let messageData = snapshot.value as? [String: Any] else {
             throw NSError(domain: "ChatService", code: 404, userInfo: [NSLocalizedDescriptionKey: "Message not found"])
         }
 
-        let originalMessage = conversationMessages[messageIndex]
-
-        // Verify user can edit this message
-        guard originalMessage.canEdit(by: currentUserId) else {
-            throw NSError(domain: "ChatService", code: 403, userInfo: [NSLocalizedDescriptionKey: "You can only edit your own messages within 15 minutes"])
+        let senderId = messageData["senderId"] as? String ?? ""
+        let originalText = messageData["text"] as? String ?? ""
+        let createdAtTimestamp = messageData["createdAt"] as? TimeInterval ?? 0
+        let createdAt = Date(timeIntervalSince1970: createdAtTimestamp / 1000)
+        
+        // Verify user can edit (sender only, within 15 minutes)
+        guard senderId == currentUserId else {
+            throw NSError(domain: "ChatService", code: 403, userInfo: [NSLocalizedDescriptionKey: "You can only edit your own messages"])
+        }
+        
+        let fifteenMinutesAgo = Date().addingTimeInterval(-15 * 60)
+        guard createdAt > fifteenMinutesAgo else {
+            throw NSError(domain: "ChatService", code: 403, userInfo: [NSLocalizedDescriptionKey: "Messages can only be edited within 15 minutes"])
         }
 
-        // OPTIMISTIC UPDATE: Update local state immediately
-        var updatedMessage = originalMessage
-        updatedMessage.text = trimmedText
-        updatedMessage.editedAt = Date()
-        conversationMessages[messageIndex] = updatedMessage
-        messages[conversationId] = conversationMessages
-
-        print("🔄 Optimistically updated message text")
-
-        let messageRef = db.collection("conversations")
-            .document(conversationId)
-            .collection("messages")
-            .document(messageId)
-
-        do {
-            print("✏️ Editing message \(messageId)")
-
             // Prepare edit history
-            var editHistory = originalMessage.editHistory ?? []
-            editHistory.append(originalMessage.text) // Save original text
+        var editHistory = messageData["editHistory"] as? [String] ?? []
+        editHistory.append(originalText)
 
-            // Update Firestore
-            try await messageRef.updateData([
+        // Update message
+        try await messageRef.updateChildValues([
                 "text": trimmedText,
-                "editedAt": FieldValue.serverTimestamp(),
+            "editedAt": ServerValue.timestamp(),
                 "editHistory": editHistory
             ])
 
-            print("✅ Message edited successfully - confirmed by server")
-
-        } catch {
-            // ROLLBACK: Restore original message on failure
-            print("❌ Edit failed, rolling back to original text")
-
-            guard var messages = messages[conversationId],
-                  let index = messages.firstIndex(where: { $0.id == messageId }) else {
-                throw error
+        print("✅ Message edited successfully")
+        
+        // Update local cache
+        await MainActor.run {
+            if var conversationMessages = messages[conversationId],
+               let index = conversationMessages.firstIndex(where: { $0.id == messageId }) {
+                var updatedMessage = conversationMessages[index]
+                updatedMessage.text = trimmedText
+                updatedMessage.editedAt = Date()
+                updatedMessage.editHistory = editHistory
+                conversationMessages[index] = updatedMessage
+                messages[conversationId] = conversationMessages
             }
-
-            messages[index] = originalMessage
-            self.messages[conversationId] = messages
-
-            throw error
         }
     }
-
-    // MARK: - Message Search
-
-    /// Search messages in a conversation
-    /// - Parameters:
-    ///   - conversationId: The conversation to search in
-    ///   - query: The search query string
-    /// - Returns: Array of messages matching the query
-    func searchMessages(conversationId: String, query: String) -> [Message] {
-        guard !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            return []
-        }
-
-        let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-
-        // Search in cached messages (local first for speed)
-        guard let allMessages = messages[conversationId] else {
-            return []
-        }
-
-        // Filter messages that contain the query (case-insensitive)
-        let results = allMessages.filter { message in
-            message.text.lowercased().contains(trimmedQuery)
-        }
-
-        print("🔍 Found \(results.count) messages matching '\(query)'")
-        return results
-    }
-
-    // MARK: - Message Reactions
-
-    /// Add or toggle a reaction to a message
-    /// - Parameters:
-    ///   - emoji: The emoji reaction (e.g., "👍", "❤️")
-    ///   - messageId: The message ID
-    ///   - conversationId: The conversation ID
-    ///   - userId: The user adding the reaction
+    
     func addReaction(emoji: String, messageId: String, conversationId: String, userId: String) async throws {
-        let messageRef = db.collection("conversations")
-            .document(conversationId)
-            .collection("messages")
-            .document(messageId)
-
+        print("➕ Adding reaction \(emoji) to message \(messageId)")
+        
+        let messageRef = db.child("conversations")
+            .child(conversationId)
+            .child("messages")
+            .child(messageId)
+        
         // Get current reactions
-        let messageDoc = try await messageRef.getDocument()
-        guard var message = try? messageDoc.data(as: Message.self) else {
-            throw NSError(domain: "ChatService", code: 404, userInfo: [NSLocalizedDescriptionKey: "Message not found"])
-        }
-
-        var reactions = message.reactions ?? [:]
+        let snapshot = try await messageRef.child("reactions").getData()
+        var reactions = (snapshot.value as? [String: [String]]) ?? [:]
         var userIds = reactions[emoji] ?? []
 
         // Toggle: if user already reacted with this emoji, remove it
@@ -1545,72 +840,35 @@ class ChatService: ObservableObject {
             } else {
                 reactions[emoji] = userIds
             }
-            print("➖ Removed reaction \(emoji) from message \(messageId)")
+            print("➖ Removed reaction \(emoji)")
         } else {
             // Add user to this emoji's reactions
             userIds.append(userId)
             reactions[emoji] = userIds
-            print("➕ Added reaction \(emoji) to message \(messageId)")
+            print("➕ Added reaction \(emoji)")
         }
-
-        // Update Firestore
-        try await messageRef.updateData([
-            "reactions": reactions.isEmpty ? FieldValue.delete() : reactions
-        ])
+        
+        // Update in database
+        if reactions.isEmpty {
+            try await messageRef.child("reactions").removeValue()
+        } else {
+            try await messageRef.child("reactions").setValue(reactions)
+        }
 
         print("✅ Reaction updated successfully")
-    }
-
-    /// Remove a specific reaction from a message
-    /// - Parameters:
-    ///   - emoji: The emoji reaction to remove
-    ///   - messageId: The message ID
-    ///   - conversationId: The conversation ID
-    ///   - userId: The user removing the reaction
-    func removeReaction(emoji: String, messageId: String, conversationId: String, userId: String) async throws {
-        let messageRef = db.collection("conversations")
-            .document(conversationId)
-            .collection("messages")
-            .document(messageId)
-
-        // Get current reactions
-        let messageDoc = try await messageRef.getDocument()
-        guard var message = try? messageDoc.data(as: Message.self) else {
-            throw NSError(domain: "ChatService", code: 404, userInfo: [NSLocalizedDescriptionKey: "Message not found"])
-        }
-
-        var reactions = message.reactions ?? [:]
-        guard var userIds = reactions[emoji] else {
-            print("⚠️ No reaction \(emoji) to remove")
-            return
-        }
-
-        // Remove user from this emoji's reactions
-        if let index = userIds.firstIndex(of: userId) {
-            userIds.remove(at: index)
-
-            if userIds.isEmpty {
-                reactions.removeValue(forKey: emoji)
-            } else {
-                reactions[emoji] = userIds
+        
+        // Update local cache
+        await MainActor.run {
+            if var conversationMessages = messages[conversationId],
+               let index = conversationMessages.firstIndex(where: { $0.id == messageId }) {
+                var updatedMessage = conversationMessages[index]
+                updatedMessage.reactions = reactions.isEmpty ? nil : reactions
+                conversationMessages[index] = updatedMessage
+                messages[conversationId] = conversationMessages
             }
-
-            // Update Firestore
-            try await messageRef.updateData([
-                "reactions": reactions.isEmpty ? FieldValue.delete() : reactions
-            ])
-
-            print("✅ Reaction \(emoji) removed successfully")
         }
     }
-
-    // MARK: - Message Forwarding
-
-    /// Forward a message to multiple conversations
-    /// - Parameters:
-    ///   - message: The message to forward
-    ///   - conversationIds: Array of conversation IDs to forward to
-    ///   - currentUserId: The user forwarding the message
+    
     func forwardMessage(message: Message, to conversationIds: [String], from currentUserId: String) async throws {
         guard !conversationIds.isEmpty else {
             print("⚠️ No conversations selected for forwarding")
@@ -1621,7 +879,7 @@ class ChatService: ObservableObject {
 
         for conversationId in conversationIds {
             do {
-                // Create forwarded message text with prefix
+                // Create forwarded message text
                 let forwardedText = "Forwarded: \(message.text)"
 
                 // Send message to each conversation
@@ -1641,385 +899,829 @@ class ChatService: ObservableObject {
         print("✅ Message forwarded successfully to all conversations")
     }
 
-    // MARK: - Group Management
-
-    /// Add participants to a group conversation
-    func addParticipants(conversationId: String, userIds: [String], adminId: String) async throws {
-        let conversationRef = db.collection("conversations").document(conversationId)
-
-        // Verify admin permissions
-        let doc = try await conversationRef.getDocument()
-        guard let conversation = try? doc.data(as: Conversation.self) else {
-            throw NSError(domain: "ChatService", code: 404, userInfo: [NSLocalizedDescriptionKey: "Conversation not found"])
+    func clearChatHistory(conversationId: String) async throws {
+        print("🗑️ Clearing chat history for conversation: \(conversationId)")
+        
+        // Delete local messages only
+        try LocalStorageService.shared.deleteMessages(for: conversationId)
+        
+        // Clear from memory
+        await MainActor.run {
+            messages[conversationId] = []
+            messageCache[conversationId] = []
         }
-
-        guard conversation.isAdmin(adminId) else {
-            throw NSError(domain: "ChatService", code: 403, userInfo: [NSLocalizedDescriptionKey: "Only admins can add participants"])
-        }
-
-        try await conversationRef.updateData([
-            "participantIds": FieldValue.arrayUnion(userIds)
-        ])
-
-        // Send system message for each added user
-        for userId in userIds {
-            let systemMessage = "Added to group"
-            try await sendMessage(conversationId: conversationId, senderId: userId, text: systemMessage)
-        }
-
-        print("✅ Added \(userIds.count) participant(s) to conversation")
+        
+        print("✅ Chat history cleared locally")
     }
-
-    /// Remove a participant from a group conversation
-    func removeParticipant(conversationId: String, userId: String, adminId: String) async throws {
-        let conversationRef = db.collection("conversations").document(conversationId)
-
-        // Verify admin permissions
-        let doc = try await conversationRef.getDocument()
-        guard let conversation = try? doc.data(as: Conversation.self) else {
+    
+    func deleteConversation(conversationId: String) async throws {
+        print("🗑️ Deleting conversation: \(conversationId)")
+        
+        // Stop listening
+        stopObservingMessages(conversationId: conversationId)
+        
+        // Delete all messages
+        try await db.child("conversations")
+            .child(conversationId)
+            .child("messages")
+            .removeValue()
+        
+        // Delete conversation
+        try await db.child("conversations")
+            .child(conversationId)
+            .removeValue()
+        
+        // Update local state
+        await MainActor.run {
+            conversations.removeAll { $0.id == conversationId }
+            messages.removeValue(forKey: conversationId)
+            messageCache.removeValue(forKey: conversationId)
+        }
+        
+        // Clear local storage
+        try LocalStorageService.shared.deleteMessages(for: conversationId)
+        try LocalStorageService.shared.deleteConversation(id: conversationId)
+        
+        print("✅ Conversation deleted successfully")
+    }
+    
+    func pinMessage(conversationId: String, messageId: String, userId: String) async throws {
+        print("📌 Pinning message \(messageId)")
+        
+        let conversationRef = db.child("conversations").child(conversationId)
+        
+        // Get current conversation
+        let snapshot = try await conversationRef.getData()
+        guard let convData = snapshot.value as? [String: Any] else {
             throw NSError(domain: "ChatService", code: 404, userInfo: [NSLocalizedDescriptionKey: "Conversation not found"])
         }
 
-        guard conversation.isAdmin(adminId) else {
-            throw NSError(domain: "ChatService", code: 403, userInfo: [NSLocalizedDescriptionKey: "Only admins can remove participants"])
+        let type = ConversationType(rawValue: convData["type"] as? String ?? "direct") ?? .direct
+        let adminIds = convData["adminIds"] as? [String] ?? []
+        
+        // Check permissions: direct = anyone, groups = admins only
+        if type == .group && !adminIds.contains(userId) {
+            throw NSError(domain: "ChatService", code: 403, userInfo: [NSLocalizedDescriptionKey: "Only admins can pin messages in groups"])
+        }
+        
+        // Get current pinned messages
+        var pinnedIds = convData["pinnedMessageIds"] as? [String] ?? []
+        
+        // Check limit (max 3)
+        guard pinnedIds.count < 3 else {
+            throw NSError(domain: "ChatService", code: 400, userInfo: [NSLocalizedDescriptionKey: "Maximum 3 pinned messages allowed"])
+        }
+        
+        // Check if already pinned
+        guard !pinnedIds.contains(messageId) else {
+            return
+        }
+        
+        // Add to pinned
+        pinnedIds.append(messageId)
+        try await conversationRef.child("pinnedMessageIds").setValue(pinnedIds)
+        
+        print("✅ Message pinned successfully")
+    }
+    
+    func unpinMessage(conversationId: String, messageId: String, userId: String) async throws {
+        print("📌 Unpinning message \(messageId)")
+        
+        let conversationRef = db.child("conversations").child(conversationId)
+        
+        // Get current conversation
+        let snapshot = try await conversationRef.getData()
+        guard let convData = snapshot.value as? [String: Any] else {
+            throw NSError(domain: "ChatService", code: 404, userInfo: [NSLocalizedDescriptionKey: "Conversation not found"])
         }
 
-        // Prevent removing last admin
-        if conversation.isAdmin(userId) {
-            let adminCount = conversation.adminIds?.count ?? 0
-            if adminCount <= 1 {
-                throw NSError(domain: "ChatService", code: 400, userInfo: [NSLocalizedDescriptionKey: "Cannot remove the last admin"])
+        let type = ConversationType(rawValue: convData["type"] as? String ?? "direct") ?? .direct
+        let adminIds = convData["adminIds"] as? [String] ?? []
+        
+        // Check permissions
+        if type == .group && !adminIds.contains(userId) {
+            throw NSError(domain: "ChatService", code: 403, userInfo: [NSLocalizedDescriptionKey: "Only admins can unpin messages in groups"])
+        }
+        
+        // Remove from pinned
+        var pinnedIds = convData["pinnedMessageIds"] as? [String] ?? []
+        pinnedIds.removeAll { $0 == messageId }
+        
+        if pinnedIds.isEmpty {
+            try await conversationRef.child("pinnedMessageIds").removeValue()
+        } else {
+            try await conversationRef.child("pinnedMessageIds").setValue(pinnedIds)
+        }
+        
+        print("✅ Message unpinned successfully")
+    }
+    
+    func searchMessages(conversationId: String, query: String) -> [Message] {
+        guard !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return []
+        }
+        
+        let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        
+        // Search in cached messages
+        guard let allMessages = messages[conversationId] else {
+            return []
+        }
+        
+        let results = allMessages.filter { message in
+            message.text.lowercased().contains(trimmedQuery)
+        }
+        
+        print("🔍 Found \(results.count) messages matching '\(query)'")
+        return results
+    }
+    
+    // MARK: - Pagination
+    
+    func loadOlderMessages(conversationId: String) async {
+        // Prevent multiple simultaneous loads
+        guard isLoadingMoreMessages[conversationId] != true else {
+            print("⚠️ Already loading more messages")
+            return
+        }
+        
+        guard hasMoreMessages[conversationId] != false else {
+            print("📭 No more messages to load")
+            return
+        }
+        
+        await MainActor.run {
+            isLoadingMoreMessages[conversationId] = true
+        }
+        
+        do {
+            let currentMessages = await MainActor.run { messages[conversationId] ?? [] }
+            guard let oldestMessage = currentMessages.first else {
+                await MainActor.run {
+                    isLoadingMoreMessages[conversationId] = false
+                    hasMoreMessages[conversationId] = false
+                }
+                return
+            }
+            
+            print("📥 Loading messages before \(oldestMessage.createdAt)")
+            
+            // Query for older messages (before oldest)
+            let snapshot = try await db.child("conversations")
+                .child(conversationId)
+                .child("messages")
+                .queryOrdered(byChild: "createdAt")
+                .queryEnding(atValue: oldestMessage.createdAt.timeIntervalSince1970 * 1000)
+                .queryLimited(toLast: UInt(messagesPerPage))
+                .getData()
+            
+            guard let messagesDict = snapshot.value as? [String: [String: Any]] else {
+                await MainActor.run {
+                    isLoadingMoreMessages[conversationId] = false
+                    hasMoreMessages[conversationId] = false
+                }
+                return
+            }
+            
+            let olderMessages = messagesDict.compactMap { (msgId, data) -> Message? in
+                Message(
+                    id: msgId,
+                    conversationId: conversationId,
+                    senderId: data["senderId"] as? String ?? "",
+                    text: data["text"] as? String ?? "",
+                    createdAt: Date(timeIntervalSince1970: (data["createdAt"] as? TimeInterval ?? 0) / 1000),
+                    status: data["status"] as? String ?? "sent",
+                    deliveredTo: data["deliveredTo"] as? [String] ?? [],
+                    readBy: data["readBy"] as? [String] ?? []
+                )
+            }.filter { $0.id != oldestMessage.id } // Exclude the pivot message
+            
+            print("✅ Loaded \(olderMessages.count) older messages")
+            
+            await MainActor.run {
+                hasMoreMessages[conversationId] = olderMessages.count >= messagesPerPage
+                
+                if !olderMessages.isEmpty {
+                    var updatedMessages = currentMessages
+                    updatedMessages.insert(contentsOf: olderMessages, at: 0)
+                    updatedMessages.sort { $0.createdAt < $1.createdAt }
+                    
+                    messages[conversationId] = updatedMessages
+                    messageCache[conversationId] = updatedMessages
+                }
+                
+                isLoadingMoreMessages[conversationId] = false
+            }
+        } catch {
+            print("❌ Error loading older messages: \(error.localizedDescription)")
+            await MainActor.run {
+                isLoadingMoreMessages[conversationId] = false
             }
         }
-
-        try await conversationRef.updateData([
-            "participantIds": FieldValue.arrayRemove([userId]),
-            "adminIds": FieldValue.arrayRemove([userId])
-        ])
-
-        print("✅ Removed participant from conversation")
     }
-
-    /// Promote a user to admin
-    func makeAdmin(conversationId: String, userId: String, currentAdminId: String) async throws {
-        let conversationRef = db.collection("conversations").document(conversationId)
-
-        // Verify current user is admin
-        let doc = try await conversationRef.getDocument()
-        guard let conversation = try? doc.data(as: Conversation.self) else {
-            throw NSError(domain: "ChatService", code: 404, userInfo: [NSLocalizedDescriptionKey: "Conversation not found"])
+    
+    // MARK: - Media Messages
+    
+    func sendImageMessage(conversationId: String, senderId: String, image: UIImage, progressHandler: ((Double) -> Void)? = nil) async throws {
+        let startTime = Date()
+        print("📷 Sending image message to conversation: \(conversationId)")
+        
+        let messageId = UUID().uuidString
+        let createdAt = Date()
+        
+        // Start performance tracking
+        await PerformanceMonitor.shared.startMessageSend(messageId: messageId)
+        
+        // Create local message immediately (optimistic UI)
+        let localMessage = Message(
+            id: messageId,
+            conversationId: conversationId,
+            senderId: senderId,
+            text: "",
+            createdAt: createdAt,
+            status: "sending",
+            mediaType: "image"
+        )
+        
+        // Update UI immediately
+        await MainActor.run {
+            var currentMessages = messages[conversationId] ?? []
+            currentMessages.append(localMessage)
+            messages[conversationId] = currentMessages
+            messageCache[conversationId] = currentMessages
+            lastMessageCount[conversationId] = currentMessages.count
         }
-
-        guard conversation.isAdmin(currentAdminId) else {
-            throw NSError(domain: "ChatService", code: 403, userInfo: [NSLocalizedDescriptionKey: "Only admins can make others admin"])
+        
+        do {
+            // Upload image to Firebase Storage
+            print("📤 Uploading image to Storage...")
+            let (fullURL, thumbnailURL) = try await MediaService.shared.uploadImage(
+                image,
+                conversationId: conversationId,
+                messageId: messageId,
+                userId: senderId,
+                progressHandler: progressHandler
+            )
+            
+            print("✅ Image uploaded")
+            
+            // Save to Realtime Database
+            let messageData: [String: Any] = [
+                "senderId": senderId,
+                "text": "",
+                "createdAt": ServerValue.timestamp(),
+                "status": "sent",
+                "deliveredTo": [],
+                "readBy": [],
+                "mediaType": "image",
+                "mediaURL": fullURL,
+                "thumbnailURL": thumbnailURL
+            ]
+            
+            try await db.child("conversations")
+                .child(conversationId)
+                .child("messages")
+                .child(messageId)
+                .setValue(messageData)
+            
+            // Update conversation
+            try await db.child("conversations")
+                .child(conversationId)
+                .updateChildValues([
+                    "lastMessageText": "📷 Image",
+                    "lastMessageAt": ServerValue.timestamp()
+                ])
+            
+            let duration = Date().timeIntervalSince(startTime)
+            print("✅ Image message sent in \(Int(duration * 1000))ms")
+            
+            await PerformanceMonitor.shared.completeMessageSend(messageId: messageId, success: true)
+            
+            // Update local message
+            await MainActor.run {
+                if var currentMessages = messages[conversationId],
+                   let index = currentMessages.firstIndex(where: { $0.id == messageId }) {
+                    currentMessages[index] = Message(
+                        id: messageId,
+                        conversationId: conversationId,
+                        senderId: senderId,
+                        text: "",
+                        createdAt: createdAt,
+                        status: "sent",
+                        mediaType: "image",
+                        mediaURL: fullURL,
+                        thumbnailURL: thumbnailURL
+                    )
+                    messages[conversationId] = currentMessages
+                    messageCache[conversationId] = currentMessages
+                }
+            }
+        } catch {
+            print("❌ Error sending image: \(error.localizedDescription)")
+            await PerformanceMonitor.shared.completeMessageSend(messageId: messageId, success: false)
+            
+            await MainActor.run {
+                if var currentMessages = messages[conversationId],
+                   let index = currentMessages.firstIndex(where: { $0.id == messageId }) {
+                    currentMessages[index].status = "error"
+                    messages[conversationId] = currentMessages
+                }
+            }
+            throw error
         }
-
-        try await conversationRef.updateData([
-            "adminIds": FieldValue.arrayUnion([userId])
-        ])
-
-        print("✅ User \(userId) promoted to admin")
     }
-
+    
+    func sendVideoMessage(conversationId: String, senderId: String, videoURL: URL, progressHandler: ((Double) -> Void)? = nil) async throws {
+        print("🎥 Sending video message")
+        
+        let messageId = UUID().uuidString
+        let createdAt = Date()
+        
+        // Create local message (optimistic UI)
+        let localMessage = Message(
+            id: messageId,
+            conversationId: conversationId,
+            senderId: senderId,
+            text: "",
+            createdAt: createdAt,
+            status: "sending",
+            mediaType: "video"
+        )
+        
+        await MainActor.run {
+            var currentMessages = messages[conversationId] ?? []
+            currentMessages.append(localMessage)
+            messages[conversationId] = currentMessages
+        }
+        
+        do {
+            // Upload video
+            let (videoDownloadURL, thumbnailURL, duration) = try await MediaService.shared.uploadVideo(
+                videoURL,
+                conversationId: conversationId,
+                messageId: messageId,
+                userId: senderId,
+                progressHandler: progressHandler
+            )
+            
+            // Save to database
+            let messageData: [String: Any] = [
+                "senderId": senderId,
+                "text": "",
+                "createdAt": ServerValue.timestamp(),
+                "status": "sent",
+                "deliveredTo": [],
+                "readBy": [],
+                "mediaType": "video",
+                "mediaURL": videoDownloadURL,
+                "thumbnailURL": thumbnailURL,
+                "videoDuration": duration
+            ]
+            
+            try await db.child("conversations")
+                .child(conversationId)
+                .child("messages")
+                .child(messageId)
+                .setValue(messageData)
+            
+            try await db.child("conversations")
+                .child(conversationId)
+                .updateChildValues([
+                    "lastMessageText": "🎥 Video",
+                    "lastMessageAt": ServerValue.timestamp()
+                ])
+            
+            print("✅ Video message sent")
+            
+            // Update local
+            await MainActor.run {
+                if var currentMessages = messages[conversationId],
+                   let index = currentMessages.firstIndex(where: { $0.id == messageId }) {
+                    currentMessages[index] = Message(
+                        id: messageId,
+                        conversationId: conversationId,
+                        senderId: senderId,
+                        text: "",
+                        createdAt: createdAt,
+                        status: "sent",
+                        mediaType: "video",
+                        mediaURL: videoDownloadURL,
+                        thumbnailURL: thumbnailURL,
+                        videoDuration: duration
+                    )
+                    messages[conversationId] = currentMessages
+                }
+            }
+        } catch {
+            print("❌ Error sending video: \(error.localizedDescription)")
+            await MainActor.run {
+                if var currentMessages = messages[conversationId],
+                   let index = currentMessages.firstIndex(where: { $0.id == messageId }) {
+                    currentMessages[index].status = "error"
+                    messages[conversationId] = currentMessages
+                }
+            }
+            throw error
+        }
+    }
+    
+    func sendVoiceMessage(conversationId: String, senderId: String, audioData: Data, duration: TimeInterval, progressHandler: ((Double) -> Void)? = nil) async throws {
+        print("🎤 Sending voice message")
+        
+        let messageId = UUID().uuidString
+        let createdAt = Date()
+        
+        // Create local message (optimistic UI)
+        let localMessage = Message(
+            id: messageId,
+            conversationId: conversationId,
+            senderId: senderId,
+            text: "",
+            createdAt: createdAt,
+            status: "sending",
+            mediaType: "audio",
+            audioDuration: duration
+        )
+        
+        await MainActor.run {
+            var currentMessages = messages[conversationId] ?? []
+            currentMessages.append(localMessage)
+            messages[conversationId] = currentMessages
+        }
+        
+        do {
+            // Upload audio
+            let audioURL = try await MediaService.shared.uploadAudio(
+                audioData,
+                conversationId: conversationId,
+                messageId: messageId,
+                userId: senderId,
+                duration: duration,
+                progressHandler: progressHandler
+            )
+            
+            // Save to database
+            let messageData: [String: Any] = [
+                "senderId": senderId,
+                "text": "",
+                "createdAt": ServerValue.timestamp(),
+                "status": "sent",
+                "deliveredTo": [],
+                "readBy": [],
+                "mediaType": "audio",
+                "mediaURL": audioURL,
+                "audioDuration": duration
+            ]
+            
+            try await db.child("conversations")
+                .child(conversationId)
+                .child("messages")
+                .child(messageId)
+                .setValue(messageData)
+            
+            try await db.child("conversations")
+                .child(conversationId)
+                .updateChildValues([
+                    "lastMessageText": "🎤 Voice message",
+                    "lastMessageAt": ServerValue.timestamp()
+                ])
+            
+            print("✅ Voice message sent")
+            
+            // Update local
+            await MainActor.run {
+                if var currentMessages = messages[conversationId],
+                   let index = currentMessages.firstIndex(where: { $0.id == messageId }) {
+                    currentMessages[index] = Message(
+                        id: messageId,
+                        conversationId: conversationId,
+                        senderId: senderId,
+                        text: "",
+                        createdAt: createdAt,
+                        status: "sent",
+                        mediaType: "audio",
+                        mediaURL: audioURL,
+                        audioDuration: duration
+                    )
+                    messages[conversationId] = currentMessages
+                }
+            }
+        } catch {
+            print("❌ Error sending voice message: \(error.localizedDescription)")
+            await MainActor.run {
+                if var currentMessages = messages[conversationId],
+                   let index = currentMessages.firstIndex(where: { $0.id == messageId }) {
+                    currentMessages[index].status = "error"
+                    messages[conversationId] = currentMessages
+                }
+            }
+            throw error
+        }
+    }
+    
     // MARK: - Group Management
-
-    /// Update group information (name, description)
+    
     func updateGroupInfo(conversationId: String, groupName: String?, groupDescription: String?, adminId: String) async throws {
-        let conversationRef = db.collection("conversations").document(conversationId)
+        print("✏️ Updating group info")
+        
+        let conversationRef = db.child("conversations").child(conversationId)
 
         // Verify admin permissions
-        let doc = try await conversationRef.getDocument()
-        guard let conversation = try? doc.data(as: Conversation.self) else {
+        let snapshot = try await conversationRef.getData()
+        guard let convData = snapshot.value as? [String: Any] else {
             throw NSError(domain: "ChatService", code: 404, userInfo: [NSLocalizedDescriptionKey: "Conversation not found"])
         }
 
-        guard conversation.type == .group else {
+        let type = ConversationType(rawValue: convData["type"] as? String ?? "direct") ?? .direct
+        guard type == .group else {
             throw NSError(domain: "ChatService", code: 400, userInfo: [NSLocalizedDescriptionKey: "Not a group conversation"])
         }
 
-        guard conversation.isAdmin(adminId) else {
+        let adminIds = convData["adminIds"] as? [String] ?? []
+        guard adminIds.contains(adminId) else {
             throw NSError(domain: "ChatService", code: 403, userInfo: [NSLocalizedDescriptionKey: "Only admins can update group info"])
         }
-
-        var updateData: [String: Any] = [:]
+        
+        var updates: [String: Any] = [:]
         if let name = groupName {
-            updateData["groupName"] = name
+            updates["groupName"] = name
         }
         if let description = groupDescription {
-            updateData["groupDescription"] = description
+            updates["groupDescription"] = description
         }
-
-        guard !updateData.isEmpty else { return }
-
-        try await conversationRef.updateData(updateData)
+        
+        guard !updates.isEmpty else { return }
+        
+        try await conversationRef.updateChildValues(updates)
         print("✅ Updated group info")
     }
-
-    /// Leave a group conversation
-    func leaveGroup(conversationId: String, userId: String) async throws {
-        let conversationRef = db.collection("conversations").document(conversationId)
-
-        // Get conversation data
-        let doc = try await conversationRef.getDocument()
-        guard let conversation = try? doc.data(as: Conversation.self) else {
-            throw NSError(domain: "ChatService", code: 404, userInfo: [NSLocalizedDescriptionKey: "Conversation not found"])
-        }
-
-        guard conversation.type == .group else {
-            throw NSError(domain: "ChatService", code: 400, userInfo: [NSLocalizedDescriptionKey: "Not a group conversation"])
-        }
-
-        // Check if user is the last admin
-        if conversation.isAdmin(userId) {
-            let adminCount = conversation.adminIds?.count ?? 0
-            if adminCount <= 1 {
-                throw NSError(domain: "ChatService", code: 400, userInfo: [NSLocalizedDescriptionKey: "Cannot leave: you are the last admin. Please promote another admin first."])
-            }
-        }
-
-        // Remove user from participants and admins
-        try await conversationRef.updateData([
-            "participantIds": FieldValue.arrayRemove([userId]),
-            "adminIds": FieldValue.arrayRemove([userId])
-        ])
-
-        // Send system message
-        let systemMessage = "left the group"
-        try await sendMessage(conversationId: conversationId, senderId: userId, text: systemMessage)
-
-        print("✅ User \(userId) left the group")
-    }
-
-    /// Toggle mute notifications for a conversation
-    func toggleMuteNotifications(conversationId: String, userId: String, isMuted: Bool) async throws {
-        let conversationRef = db.collection("conversations").document(conversationId)
-
-        let settings = ParticipantSettings(isMuted: isMuted)
-
-        try await conversationRef.updateData([
-            "participantSettings.\(userId).isMuted": isMuted
-        ])
-
-        print("✅ Mute notifications toggled: \(isMuted) for user \(userId)")
-    }
-
-    /// Remove admin status from a user
-    func removeAdmin(conversationId: String, userId: String, currentAdminId: String) async throws {
-        let conversationRef = db.collection("conversations").document(conversationId)
-
-        // Verify current user is admin
-        let doc = try await conversationRef.getDocument()
-        guard let conversation = try? doc.data(as: Conversation.self) else {
-            throw NSError(domain: "ChatService", code: 404, userInfo: [NSLocalizedDescriptionKey: "Conversation not found"])
-        }
-
-        guard conversation.isAdmin(currentAdminId) else {
-            throw NSError(domain: "ChatService", code: 403, userInfo: [NSLocalizedDescriptionKey: "Only admins can remove admin status"])
-        }
-
-        // Prevent removing last admin
-        let adminCount = conversation.adminIds?.count ?? 0
-        if adminCount <= 1 {
-            throw NSError(domain: "ChatService", code: 400, userInfo: [NSLocalizedDescriptionKey: "Cannot remove the last admin"])
-        }
-
-        try await conversationRef.updateData([
-            "adminIds": FieldValue.arrayRemove([userId])
-        ])
-
-        print("✅ Removed admin status from user \(userId)")
-    }
-
-    /// Update group avatar
+    
     func updateGroupAvatar(conversationId: String, image: UIImage, adminId: String) async throws {
-        let conversationRef = db.collection("conversations").document(conversationId)
-
-        // Verify admin permissions
-        let doc = try await conversationRef.getDocument()
-        guard let conversation = try? doc.data(as: Conversation.self) else {
+        print("📷 Updating group avatar")
+        
+        // Verify permissions first
+        let conversationRef = db.child("conversations").child(conversationId)
+        let snapshot = try await conversationRef.getData()
+        guard let convData = snapshot.value as? [String: Any] else {
             throw NSError(domain: "ChatService", code: 404, userInfo: [NSLocalizedDescriptionKey: "Conversation not found"])
         }
-
-        guard conversation.type == .group else {
-            throw NSError(domain: "ChatService", code: 400, userInfo: [NSLocalizedDescriptionKey: "Not a group conversation"])
-        }
-
-        guard conversation.isAdmin(adminId) else {
+        
+        let adminIds = convData["adminIds"] as? [String] ?? []
+        guard adminIds.contains(adminId) else {
             throw NSError(domain: "ChatService", code: 403, userInfo: [NSLocalizedDescriptionKey: "Only admins can update group avatar"])
         }
-
-        // Upload avatar using MediaService (we'll create a special avatar upload method)
-        let avatarURL = try await uploadGroupAvatarImage(image, conversationId: conversationId)
-
-        // Update conversation with avatar URL
-        try await conversationRef.updateData([
-            "groupAvatarURL": avatarURL
-        ])
-
-        print("✅ Updated group avatar")
-    }
-
-    /// Upload group avatar image to Firebase Storage
-    private func uploadGroupAvatarImage(_ image: UIImage, conversationId: String) async throws -> String {
+        
+        // Upload image to Storage
         guard let imageData = image.jpegData(compressionQuality: 0.8) else {
-            throw NSError(domain: "ChatService", code: 400, userInfo: [NSLocalizedDescriptionKey: "Failed to compress image"])
+            throw NSError(domain: "ChatService", code: 400, userInfo: [NSLocalizedDescriptionKey: "Failed to process image"])
         }
 
         let storage = Storage.storage()
-        let storageRef = storage.reference()
-        let avatarPath = "conversations/\(conversationId)/avatar.jpg"
-        let avatarRef = storageRef.child(avatarPath)
+        let avatarPath = "groups/\(conversationId)/avatar/avatar.jpg"
+        let avatarRef = storage.reference().child(avatarPath)
 
         let metadata = StorageMetadata()
         metadata.contentType = "image/jpeg"
 
         _ = try await avatarRef.putData(imageData, metadata: metadata)
-
-        // Get download URL
         let downloadURL = try await avatarRef.downloadURL()
-        return downloadURL.absoluteString
+        
+        // Update conversation
+        try await conversationRef.child("groupAvatarURL").setValue(downloadURL.absoluteString)
+        
+        print("✅ Updated group avatar")
     }
-
-    /// Update group permissions (admins only)
-    func updateGroupPermissions(
-        conversationId: String,
-        onlyAdminsCanMessage: Bool?,
-        onlyAdminsCanAddMembers: Bool?,
-        adminId: String
-    ) async throws {
-        let conversationRef = db.collection("conversations").document(conversationId)
-
-        // Verify admin permissions
-        let doc = try await conversationRef.getDocument()
-        guard let conversation = try? doc.data(as: Conversation.self) else {
+    
+    func toggleMuteNotifications(conversationId: String, userId: String, isMuted: Bool) async throws {
+        print("🔔 Toggling mute: \(isMuted)")
+        
+        try await db.child("conversations")
+            .child(conversationId)
+            .child("participantSettings")
+            .child(userId)
+            .child("isMuted")
+            .setValue(isMuted)
+        
+        print("✅ Mute toggled to \(isMuted)")
+    }
+    
+    func updateGroupPermissions(conversationId: String, onlyAdminsCanMessage: Bool?, onlyAdminsCanAddMembers: Bool?, adminId: String) async throws {
+        print("🔐 Updating group permissions")
+        
+        let conversationRef = db.child("conversations").child(conversationId)
+        
+        // Verify admin
+        let snapshot = try await conversationRef.getData()
+        guard let convData = snapshot.value as? [String: Any] else {
             throw NSError(domain: "ChatService", code: 404, userInfo: [NSLocalizedDescriptionKey: "Conversation not found"])
         }
-
-        guard conversation.type == .group else {
-            throw NSError(domain: "ChatService", code: 400, userInfo: [NSLocalizedDescriptionKey: "Not a group conversation"])
+        
+        let adminIds = convData["adminIds"] as? [String] ?? []
+        guard adminIds.contains(adminId) else {
+            throw NSError(domain: "ChatService", code: 403, userInfo: [NSLocalizedDescriptionKey: "Only admins can update permissions"])
         }
-
-        guard conversation.isAdmin(adminId) else {
-            throw NSError(domain: "ChatService", code: 403, userInfo: [NSLocalizedDescriptionKey: "Only admins can update group permissions"])
-        }
-
-        var updateData: [String: Any] = [:]
-
+        
+        var updates: [String: Any] = [:]
         if let onlyAdminsCanMessage = onlyAdminsCanMessage {
-            updateData["groupPermissions.onlyAdminsCanMessage"] = onlyAdminsCanMessage
+            updates["groupPermissions/onlyAdminsCanMessage"] = onlyAdminsCanMessage
         }
-
         if let onlyAdminsCanAddMembers = onlyAdminsCanAddMembers {
-            updateData["groupPermissions.onlyAdminsCanAddMembers"] = onlyAdminsCanAddMembers
+            updates["groupPermissions/onlyAdminsCanAddMembers"] = onlyAdminsCanAddMembers
         }
 
-        guard !updateData.isEmpty else { return }
+        guard !updates.isEmpty else { return }
 
-        try await conversationRef.updateData(updateData)
+        try await conversationRef.updateChildValues(updates)
         print("✅ Updated group permissions")
     }
 
-    // MARK: - Message Pinning
+    func leaveGroup(conversationId: String, userId: String) async throws {
+        print("🚪 Leaving group")
 
-    /// Pin a message in a conversation (limit: 3 pinned messages)
-    func pinMessage(conversationId: String, messageId: String, userId: String) async throws {
-        let conversationRef = db.collection("conversations").document(conversationId)
+        let conversationRef = db.child("conversations").child(conversationId)
 
         // Get conversation
-        let doc = try await conversationRef.getDocument()
-        guard let conversation = try? doc.data(as: Conversation.self) else {
+        let snapshot = try await conversationRef.getData()
+        guard let convData = snapshot.value as? [String: Any] else {
             throw NSError(domain: "ChatService", code: 404, userInfo: [NSLocalizedDescriptionKey: "Conversation not found"])
         }
 
-        // Check permissions: direct chats = anyone, groups = admins only
-        if conversation.type == .group && !conversation.isAdmin(userId) {
-            throw NSError(domain: "ChatService", code: 403, userInfo: [NSLocalizedDescriptionKey: "Only admins can pin messages in groups"])
-        }
-
-        // Check pinned message limit
-        let pinnedIds = conversation.pinnedMessageIds ?? []
-        if pinnedIds.count >= 3 {
-            throw NSError(domain: "ChatService", code: 400, userInfo: [NSLocalizedDescriptionKey: "Maximum 3 pinned messages allowed"])
-        }
-
-        // Check if already pinned
-        if pinnedIds.contains(messageId) {
-            return
-        }
-
-        try await conversationRef.updateData([
-            "pinnedMessageIds": FieldValue.arrayUnion([messageId])
-        ])
-
-        print("✅ Message \(messageId) pinned")
-    }
-
-    /// Unpin a message in a conversation
-    func unpinMessage(conversationId: String, messageId: String, userId: String) async throws {
-        let conversationRef = db.collection("conversations").document(conversationId)
-
-        // Get conversation
-        let doc = try await conversationRef.getDocument()
-        guard let conversation = try? doc.data(as: Conversation.self) else {
-            throw NSError(domain: "ChatService", code: 404, userInfo: [NSLocalizedDescriptionKey: "Conversation not found"])
-        }
-
-        // Check permissions: direct chats = anyone, groups = admins only
-        if conversation.type == .group && !conversation.isAdmin(userId) {
-            throw NSError(domain: "ChatService", code: 403, userInfo: [NSLocalizedDescriptionKey: "Only admins can unpin messages in groups"])
-        }
-
-        try await conversationRef.updateData([
-            "pinnedMessageIds": FieldValue.arrayRemove([messageId])
-        ])
-
-        print("✅ Message \(messageId) unpinned")
-    }
-
-    // MARK: - Sync Pending Messages
-    
-    func syncPendingMessages() async {
-        print("🔄 Syncing pending messages...")
+        let adminIds = convData["adminIds"] as? [String] ?? []
         
-        do {
-            let pendingMessages = try LocalStorageService.shared.getPendingMessages()
-            print("📤 Found \(pendingMessages.count) pending messages to sync")
-            
-            for localMessage in pendingMessages {
-                let message = localMessage.toMessage()
-                
-                do {
-                    // Try to send to Firestore
-                    let messageData: [String: Any] = [
-                        "senderId": message.senderId,
-                        "text": message.text,
-                        "createdAt": Timestamp(date: message.createdAt),
-                        "status": "sent"
-                    ]
-                    
-                    let messageRef = db.collection("conversations")
-                        .document(message.conversationId)
-                        .collection("messages")
-                        .document(message.id)
-                    
-                    try await messageRef.setData(messageData)
-                    
-                    // Update local status
-                    try? LocalStorageService.shared.updateMessageStatus(message.id, status: "sent", isSynced: true)
-                    print("✅ Synced message: \(message.id)")
-                    
-                } catch {
-                    print("❌ Failed to sync message \(message.id): \(error.localizedDescription)")
-                }
-            }
-        } catch {
-            print("❌ Error fetching pending messages: \(error.localizedDescription)")
+        // Check if last admin
+        if adminIds.contains(userId) && adminIds.count <= 1 {
+            throw NSError(domain: "ChatService", code: 400, userInfo: [NSLocalizedDescriptionKey: "Cannot leave: you are the last admin"])
         }
+        
+        // Remove from participants and admins
+        var participantIds = convData["participantIds"] as? [String] ?? []
+        participantIds.removeAll { $0 == userId }
+        
+        var newAdminIds = adminIds
+        newAdminIds.removeAll { $0 == userId }
+        
+        try await conversationRef.updateChildValues([
+            "participantIds": participantIds,
+            "adminIds": newAdminIds
+        ])
+        
+        print("✅ Left group")
+    }
+    
+    func makeAdmin(conversationId: String, userId: String, currentAdminId: String) async throws {
+        print("👑 Making user admin")
+        
+        let conversationRef = db.child("conversations").child(conversationId)
+        
+        // Verify current user is admin
+        let snapshot = try await conversationRef.getData()
+        guard let convData = snapshot.value as? [String: Any] else {
+            throw NSError(domain: "ChatService", code: 404, userInfo: [NSLocalizedDescriptionKey: "Conversation not found"])
+        }
+        
+        let adminIds = convData["adminIds"] as? [String] ?? []
+        guard adminIds.contains(currentAdminId) else {
+            throw NSError(domain: "ChatService", code: 403, userInfo: [NSLocalizedDescriptionKey: "Only admins can make others admin"])
+        }
+        
+        // Add to admins
+        var newAdminIds = adminIds
+        if !newAdminIds.contains(userId) {
+            newAdminIds.append(userId)
+        }
+        
+        try await conversationRef.child("adminIds").setValue(newAdminIds)
+        print("✅ User promoted to admin")
+    }
+    
+    func removeAdmin(conversationId: String, userId: String, currentAdminId: String) async throws {
+        print("👑 Removing admin status")
+        
+        let conversationRef = db.child("conversations").child(conversationId)
+        
+        // Verify current user is admin
+        let snapshot = try await conversationRef.getData()
+        guard let convData = snapshot.value as? [String: Any] else {
+            throw NSError(domain: "ChatService", code: 404, userInfo: [NSLocalizedDescriptionKey: "Conversation not found"])
+        }
+
+        var adminIds = convData["adminIds"] as? [String] ?? []
+        guard adminIds.contains(currentAdminId) else {
+            throw NSError(domain: "ChatService", code: 403, userInfo: [NSLocalizedDescriptionKey: "Only admins can remove admin status"])
+        }
+        
+        // Prevent removing last admin
+        guard adminIds.count > 1 else {
+            throw NSError(domain: "ChatService", code: 400, userInfo: [NSLocalizedDescriptionKey: "Cannot remove the last admin"])
+        }
+        
+        adminIds.removeAll { $0 == userId }
+        try await conversationRef.child("adminIds").setValue(adminIds)
+        print("✅ Admin status removed")
+    }
+    
+    func removeParticipant(conversationId: String, userId: String, adminId: String) async throws {
+        print("🚫 Removing participant")
+        
+        let conversationRef = db.child("conversations").child(conversationId)
+        
+        // Verify admin
+        let snapshot = try await conversationRef.getData()
+        guard let convData = snapshot.value as? [String: Any] else {
+            throw NSError(domain: "ChatService", code: 404, userInfo: [NSLocalizedDescriptionKey: "Conversation not found"])
+        }
+        
+        let adminIds = convData["adminIds"] as? [String] ?? []
+        guard adminIds.contains(adminId) else {
+            throw NSError(domain: "ChatService", code: 403, userInfo: [NSLocalizedDescriptionKey: "Only admins can remove participants"])
+        }
+        
+        // Remove from participants and admins
+        var participantIds = convData["participantIds"] as? [String] ?? []
+        participantIds.removeAll { $0 == userId }
+        
+        var newAdminIds = adminIds
+        newAdminIds.removeAll { $0 == userId }
+        
+        try await conversationRef.updateChildValues([
+            "participantIds": participantIds,
+            "adminIds": newAdminIds
+        ])
+        
+        print("✅ Participant removed")
+    }
+    
+    func addParticipants(conversationId: String, userIds: [String], adminId: String) async throws {
+        print("➕ Adding participants")
+        
+        let conversationRef = db.child("conversations").child(conversationId)
+        
+        // Verify admin
+        let snapshot = try await conversationRef.getData()
+        guard let convData = snapshot.value as? [String: Any] else {
+            throw NSError(domain: "ChatService", code: 404, userInfo: [NSLocalizedDescriptionKey: "Conversation not found"])
+        }
+        
+        let adminIds = convData["adminIds"] as? [String] ?? []
+        guard adminIds.contains(adminId) else {
+            throw NSError(domain: "ChatService", code: 403, userInfo: [NSLocalizedDescriptionKey: "Only admins can add participants"])
+        }
+        
+        // Add to participants
+        var participantIds = convData["participantIds"] as? [String] ?? []
+        for userId in userIds {
+            if !participantIds.contains(userId) {
+                participantIds.append(userId)
+            }
+        }
+        
+        try await conversationRef.child("participantIds").setValue(participantIds)
+        print("✅ Added \(userIds.count) participant(s)")
+    }
+    
+    // MARK: - Get User
+    
+    func getUser(userId: String) async throws -> User? {
+        // Check cache first for better performance
+        if let cachedUser = CacheManager.shared.getCachedUser(id: userId) {
+            return cachedUser
+        }
+        
+        // If not in cache, fetch from database
+        let snapshot = try await db.child("users").child(userId).getData()
+        
+        guard let data = snapshot.value as? [String: Any] else {
+            return nil
+        }
+        
+        let user = User(
+            id: data["id"] as? String ?? userId,
+            displayName: data["displayName"] as? String ?? "Unknown",
+            email: data["email"] as? String ?? "",
+            avatarURL: data["avatarURL"] as? String,
+            createdAt: Date(timeIntervalSince1970: (data["createdAt"] as? TimeInterval ?? 0) / 1000),
+            isOnline: data["isOnline"] as? Bool ?? false,
+            lastSeen: {
+                if let timestamp = data["lastSeen"] as? TimeInterval {
+                    return Date(timeIntervalSince1970: timestamp / 1000)
+                }
+                return nil
+            }()
+        )
+        
+        // Cache for future use
+        CacheManager.shared.cacheUser(user)
+        
+        return user
     }
     
     deinit {
-        conversationsListener?.remove()
-        messageListeners.values.forEach { $0.remove() }
+        if let handle = conversationsListener {
+            db.child("conversations").removeObserver(withHandle: handle)
+        }
+        messageListeners.forEach { (convId, handle) in
+            db.child("conversations").child(convId).child("messages").removeObserver(withHandle: handle)
+        }
     }
 }
 
@@ -2088,6 +1790,39 @@ struct Message: Identifiable, Codable, Hashable {
         self.videoDuration = videoDuration
     }
     
+    // MARK: - Message Deletion Helpers
+    
+    /// Check if this message is deleted for a specific user
+    func isDeleted(for userId: String) -> Bool {
+        return deletedBy?.contains(userId) ?? false
+    }
+    
+    /// Check if message is deleted for everyone
+    var isDeletedForEveryone: Bool {
+        return deletedForEveryone == true
+    }
+    
+    // MARK: - Message Editing Helpers
+    
+    /// Check if this message was edited
+    var wasEdited: Bool {
+        return editedAt != nil
+    }
+    
+    /// Check if this message can be edited
+    /// Rules: Only sender, within 15 minutes, not deleted
+    func canEdit(by userId: String) -> Bool {
+        // Must be the sender
+        guard senderId == userId else { return false }
+        
+        // Cannot edit deleted messages
+        guard !isDeleted(for: userId) else { return false }
+        
+        // Must be within 15 minutes of creation
+        let fifteenMinutesAgo = Date().addingTimeInterval(-15 * 60)
+        return createdAt > fifteenMinutesAgo
+    }
+    
     // Helper to determine overall status for UI display
     func displayStatus(for conversation: Conversation, currentUserId: String) -> String {
         // Only show status for messages sent by current user
@@ -2122,51 +1857,18 @@ struct Message: Identifiable, Codable, Hashable {
     }
 }
 
-// MARK: - Message Deletion Helpers
-
-extension Message {
-    /// Check if this message is deleted for a specific user
-    func isDeleted(for userId: String) -> Bool {
-        return deletedBy?.contains(userId) ?? false
-    }
-
-    /// Check if message is deleted for everyone
-    var isDeletedForEveryone: Bool {
-        return deletedForEveryone == true
-    }
-}
-
-// MARK: - Message Editing Helpers
-
-extension Message {
-    /// Check if this message can be edited
-    /// Rules: Only sender, within 15 minutes, not deleted
-    func canEdit(by userId: String) -> Bool {
-        // Must be the sender
-        guard senderId == userId else { return false }
-
-        // Cannot edit deleted messages
-        guard !isDeleted(for: userId) else { return false }
-
-        // Must be within 15 minutes of creation
-        let fifteenMinutesAgo = Date().addingTimeInterval(-15 * 60)
-        return createdAt > fifteenMinutesAgo
-    }
-
-    /// Check if this message was edited
-    var wasEdited: Bool {
-        return editedAt != nil
-    }
-}
-
 #if DEBUG
 extension ChatService {
     /// Clear in-memory state and cancel listeners so each integration test starts fresh.
     func resetForTesting() {
-        conversationsListener?.remove()
+        if let handle = conversationsListener {
+            db.child("conversations").removeObserver(withHandle: handle)
+        }
         conversationsListener = nil
         
-        messageListeners.values.forEach { $0.remove() }
+        messageListeners.forEach { (convId, handle) in
+            db.child("conversations").child(convId).child("messages").removeObserver(withHandle: handle)
+        }
         messageListeners.removeAll()
         
         conversationUpdateTask?.cancel()

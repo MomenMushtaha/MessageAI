@@ -7,7 +7,7 @@
 
 import Foundation
 import FirebaseAuth
-import FirebaseFirestore
+import FirebaseDatabase
 import Combine
 
 @MainActor
@@ -17,7 +17,7 @@ class AuthService: ObservableObject {
     @Published var errorMessage: String?
     
     private let auth = Auth.auth()
-    private let db = Firestore.firestore()
+    private let db = Database.database().reference()
     private var authStateListenerHandle: AuthStateDidChangeListenerHandle?
     
     static let shared = AuthService()
@@ -167,7 +167,7 @@ class AuthService: ObservableObject {
         guard !updateData.isEmpty else { return }
 
         do {
-            try await db.collection("users").document(userId).updateData(updateData)
+            try await db.child("users").child(userId).updateChildValues(updateData)
 
             // Update local currentUser
             if var user = currentUser {
@@ -196,21 +196,21 @@ class AuthService: ObservableObject {
         var updateData: [String: Any] = [:]
 
         if let showReadReceipts = showReadReceipts {
-            updateData["privacySettings.showReadReceipts"] = showReadReceipts
+            updateData["privacySettings/showReadReceipts"] = showReadReceipts
         }
 
         if let showOnlineStatus = showOnlineStatus {
-            updateData["privacySettings.showOnlineStatus"] = showOnlineStatus
+            updateData["privacySettings/showOnlineStatus"] = showOnlineStatus
         }
 
         if let showLastSeen = showLastSeen {
-            updateData["privacySettings.showLastSeen"] = showLastSeen
+            updateData["privacySettings/showLastSeen"] = showLastSeen
         }
 
         guard !updateData.isEmpty else { return }
 
         do {
-            try await db.collection("users").document(userId).updateData(updateData)
+            try await db.child("users").child(userId).updateChildValues(updateData)
 
             // Update local currentUser
             if var user = currentUser {
@@ -245,17 +245,17 @@ class AuthService: ObservableObject {
             "displayName": user.displayName,
             "email": user.email,
             "avatarURL": user.avatarURL as Any,
-            "createdAt": Timestamp(date: user.createdAt),
+            "createdAt": ServerValue.timestamp(),
             "isOnline": true, // New user starts online
-            "lastSeen": FieldValue.serverTimestamp()
+            "lastSeen": ServerValue.timestamp()
         ]
         
-        print("📝 Writing to Firestore: users/\(user.id)")
+        print("📝 Writing to Realtime Database: users/\(user.id)")
         do {
-            try await db.collection("users").document(user.id).setData(userData)
-            print("✅ Firestore write successful")
+            try await db.child("users").child(user.id).setValue(userData)
+            print("✅ Realtime Database write successful")
         } catch let error as NSError {
-            print("❌ Firestore write error - Domain: \(error.domain), Code: \(error.code)")
+            print("❌ Realtime Database write error - Domain: \(error.domain), Code: \(error.code)")
             print("❌ Error: \(error.localizedDescription)")
             throw error
         }
@@ -263,18 +263,23 @@ class AuthService: ObservableObject {
     
     private func loadUserData(userId: String) async {
         do {
-            let document = try await db.collection("users").document(userId).getDocument()
+            let snapshot = try await db.child("users").child(userId).getData()
             
-            if let data = document.data() {
+            if snapshot.exists(), let data = snapshot.value as? [String: Any] {
                 let user = User(
                     id: data["id"] as? String ?? userId,
                     displayName: data["displayName"] as? String ?? "Unknown",
                     email: data["email"] as? String ?? "",
                     avatarURL: data["avatarURL"] as? String,
                     bio: data["bio"] as? String,
-                    createdAt: (data["createdAt"] as? Timestamp)?.dateValue() ?? Date(),
+                    createdAt: Date(timeIntervalSince1970: (data["createdAt"] as? TimeInterval ?? 0) / 1000),
                     isOnline: data["isOnline"] as? Bool ?? false,
-                    lastSeen: (data["lastSeen"] as? Timestamp)?.dateValue()
+                    lastSeen: {
+                        if let timestamp = data["lastSeen"] as? TimeInterval {
+                            return Date(timeIntervalSince1970: timestamp / 1000)
+                        }
+                        return nil
+                    }()
                 )
                 
                 currentUser = user
@@ -284,11 +289,40 @@ class AuthService: ObservableObject {
                 Task {
                     await PresenceService.shared.startPresenceTracking(userId: userId)
                 }
+            } else {
+                // User authenticated but no data in Realtime Database
+                // This can happen if migrating from Firestore
+                print("⚠️ User \(userId) has no data in Realtime Database. Creating profile...")
+                
+                // Get email from Firebase Auth
+                if let firebaseUser = auth.currentUser {
+                    let newUser = User(
+                        id: userId,
+                        displayName: firebaseUser.displayName ?? firebaseUser.email?.components(separatedBy: "@").first ?? "User",
+                        email: firebaseUser.email ?? "",
+                        createdAt: Date()
+                    )
+                    
+                    // Create user document in Realtime Database
+                    try await createUserDocument(user: newUser)
+                    
+                    currentUser = newUser
+                    isAuthenticated = true
+                    
+                    // Start presence tracking
+                    Task {
+                        await PresenceService.shared.startPresenceTracking(userId: userId)
+                    }
+                    
+                    print("✅ Created user profile in Realtime Database")
+                } else {
+                    errorMessage = "Failed to load user profile"
+                }
             }
             
         } catch {
-            print("Error loading user data: \(error.localizedDescription)")
-            errorMessage = "Failed to load user data"
+            print("❌ Error loading user data: \(error.localizedDescription)")
+            errorMessage = "Failed to load user data: \(error.localizedDescription)"
         }
     }
     

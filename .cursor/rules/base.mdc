@@ -1,0 +1,17 @@
+Description: Base rules for MessageAI project. Always read and maintain the Memory Bank. Capture and follow project-specific engineering patterns.
+Globs: **/*
+
+Content:
+- Always read all files in `memory-bank/` at the start of every task (projectbrief, productContext, systemPatterns, techContext, activeContext, progress).
+- After significant changes, immediately update `memory-bank/activeContext.md` and `memory-bank/progress.md`.
+- Prefer optimistic UI for sends; confirm/rollback after Firestore writes.
+- Debounce listener-driven UI updates to avoid unnecessary re-renders.
+- Use Firestore batch operations for atomic message + conversation updates; paginate reads.
+- Keep offline-first behavior: SwiftData local cache, reconcile on connectivity changes.
+- Maintain performance: use `CacheManager`, `RateLimiter`, and `PerformanceMonitor` on hot paths.
+- Respect privacy toggles (e.g., read receipts) when updating message states.
+- For media, upload to Firebase Storage first, then write Firestore with URLs; show progress.
+- When citing existing code in discussions, use code references with start:end:filepath. For new snippets, use proper markdown code blocks.
+- For multi-step tasks, create a concise TODO list and keep statuses updated as work progresses.
+
+

@@ -9,7 +9,7 @@ import SwiftUI
 import SwiftData
 import FirebaseCore
 import FirebaseAuth
-import FirebaseFirestore
+import FirebaseDatabase
 import FirebaseMessaging
 
 @main
@@ -24,10 +24,8 @@ struct MessageAIApp: App {
         // Configure Firebase
         FirebaseApp.configure()
         
-        // Enable Firestore offline persistence
-        let settings = FirestoreSettings()
-        settings.cacheSettings = PersistentCacheSettings(sizeBytes: NSNumber(value: FirestoreCacheSizeUnlimited))
-        Firestore.firestore().settings = settings
+        // Enable Realtime Database offline persistence
+        Database.database().isPersistenceEnabled = true
         
         // Configure SwiftData
         do {

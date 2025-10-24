@@ -29,12 +29,14 @@ class MediaService {
     ///   - image: UIImage to upload
     ///   - conversationId: Conversation ID
     ///   - messageId: Message ID
+    ///   - userId: User ID of the sender
     ///   - progressHandler: Optional progress callback (0.0 to 1.0)
     /// - Returns: Tuple of (fullImageURL, thumbnailURL)
     func uploadImage(
         _ image: UIImage,
         conversationId: String,
         messageId: String,
+        userId: String,
         progressHandler: ((Double) -> Void)? = nil
     ) async throws -> (fullURL: String, thumbnailURL: String) {
         print("📤 Starting image upload for message: \(messageId)")
@@ -50,8 +52,8 @@ class MediaService {
         }
 
         let storageRef = storage.reference()
-        let fullImagePath = "conversations/\(conversationId)/media/\(messageId)/full.jpg"
-        let thumbnailPath = "conversations/\(conversationId)/media/\(messageId)/thumb.jpg"
+        let fullImagePath = "conversations/\(conversationId)/media/\(messageId)_full.jpg"
+        let thumbnailPath = "conversations/\(conversationId)/media/\(messageId)_thumb.jpg"
 
         let fullImageRef = storageRef.child(fullImagePath)
         let thumbnailRef = storageRef.child(thumbnailPath)
@@ -72,18 +74,59 @@ class MediaService {
             }
         }
 
-        // Wait for upload to complete
-        _ = try await uploadTask
+        do {
+            // Wait for upload to complete
+            print("⏳ Waiting for full image upload...")
+            let fullUploadResult = try await uploadTask
+            print("✅ Full image uploaded")
+            
+            // Upload thumbnail
+            print("⏳ Uploading thumbnail...")
+            let thumbnailUploadResult = try await thumbnailRef.putData(thumbnailData, metadata: metadata)
+            print("✅ Thumbnail uploaded")
+            
+            // Get download URLs (with retry to avoid eventual-consistency 404)
+            print("📥 Getting full image download URL (with retry)...")
+            let fullURL = try await getDownloadURLWithRetry(ref: fullImageRef)
+            print("✅ Got full image URL: \(fullURL)")
+            
+            print("📥 Getting thumbnail download URL (with retry)...")
+            let thumbnailURL = try await getDownloadURLWithRetry(ref: thumbnailRef)
+            print("✅ Got thumbnail URL: \(thumbnailURL)")
 
-        // Upload thumbnail
-        _ = try await thumbnailRef.putData(thumbnailData, metadata: metadata)
+            print("✅ Image upload complete - returning URLs")
+            return (fullURL, thumbnailURL)
+            
+        } catch {
+            print("❌ Error in image upload: \(error)")
+            print("❌ Error details: \(error.localizedDescription)")
+            throw error
+        }
+    }
 
-        // Get download URLs
-        let fullURL = try await fullImageRef.downloadURL().absoluteString
-        let thumbnailURL = try await thumbnailRef.downloadURL().absoluteString
+    // MARK: - Helpers
 
-        print("✅ Image uploaded successfully")
-        return (fullURL, thumbnailURL)
+    /// Fetch a download URL with retries to handle Storage eventual consistency (objectNotFound 404 right after upload)
+    private func getDownloadURLWithRetry(ref: StorageReference, maxAttempts: Int = 5) async throws -> String {
+        var attempt = 0
+        var lastError: Error?
+        var delayMs: UInt64 = 200 // start with 200ms
+
+        while attempt < maxAttempts {
+            do {
+                let url = try await ref.downloadURL().absoluteString
+                return url
+            } catch {
+                lastError = error
+                attempt += 1
+                print("⚠️ downloadURL attempt #\(attempt) failed: \(error.localizedDescription)")
+                // Exponential backoff with max ~3.2s
+                let ns = delayMs * 1_000_000
+                try? await Task.sleep(nanoseconds: ns)
+                delayMs = min(delayMs * 2, 3200)
+            }
+        }
+        throw lastError ?? NSError(domain: "MediaService", code: 404, userInfo: [NSLocalizedDescriptionKey: "Failed to get download URL after retries"])
     }
 
     // MARK: - Image Compression
@@ -149,12 +192,14 @@ class MediaService {
     ///   - videoURL: URL to the video file
     ///   - conversationId: Conversation ID
     ///   - messageId: Message ID
+    ///   - userId: User ID of the sender
     ///   - progressHandler: Optional progress callback (0.0 to 1.0)
     /// - Returns: Tuple of (videoURL, thumbnailURL, duration)
     func uploadVideo(
         _ videoURL: URL,
         conversationId: String,
         messageId: String,
+        userId: String,
         progressHandler: ((Double) -> Void)? = nil
     ) async throws -> (videoURL: String, thumbnailURL: String, duration: TimeInterval) {
         print("📤 Starting video upload for message: \(messageId)")
@@ -183,8 +228,8 @@ class MediaService {
         }
 
         let storageRef = storage.reference()
-        let videoPath = "conversations/\(conversationId)/media/\(messageId)/video.mp4"
-        let thumbnailPath = "conversations/\(conversationId)/media/\(messageId)/video_thumb.jpg"
+        let videoPath = "conversations/\(conversationId)/media/\(messageId)_video.mp4"
+        let thumbnailPath = "conversations/\(conversationId)/media/\(messageId)_video_thumb.jpg"
 
         let videoRef = storageRef.child(videoPath)
         let thumbnailRef = storageRef.child(thumbnailPath)
@@ -216,9 +261,14 @@ class MediaService {
         thumbnailMetadata.contentType = "image/jpeg"
         _ = try await thumbnailRef.putData(thumbnailData, metadata: thumbnailMetadata)
 
-        // Get download URLs
-        let videoDownloadURL = try await videoRef.downloadURL().absoluteString
-        let thumbnailDownloadURL = try await thumbnailRef.downloadURL().absoluteString
+        // Get download URLs with retry (avoid eventual 404)
+        print("📥 Getting video download URL (with retry)...")
+        let videoDownloadURL = try await getDownloadURLWithRetry(ref: videoRef)
+        print("✅ Got video URL: \(videoDownloadURL)")
+
+        print("📥 Getting video thumbnail URL (with retry)...")
+        let thumbnailDownloadURL = try await getDownloadURLWithRetry(ref: thumbnailRef)
+        print("✅ Got video thumbnail URL: \(thumbnailDownloadURL)")
 
         print("✅ Video uploaded successfully: \(videoDownloadURL)")
         return (videoDownloadURL, thumbnailDownloadURL, duration)
@@ -258,6 +308,7 @@ class MediaService {
     ///   - audioData: Audio data to upload
     ///   - conversationId: Conversation ID
     ///   - messageId: Message ID
+    ///   - userId: User ID of the sender
     ///   - duration: Audio duration in seconds
     ///   - progressHandler: Optional progress callback (0.0 to 1.0)
     /// - Returns: Audio file URL
@@ -265,13 +316,14 @@ class MediaService {
         _ audioData: Data,
         conversationId: String,
         messageId: String,
+        userId: String,
         duration: TimeInterval,
         progressHandler: ((Double) -> Void)? = nil
     ) async throws -> String {
         print("📤 Starting audio upload for message: \(messageId)")
 
         let storageRef = storage.reference()
-        let audioPath = "conversations/\(conversationId)/media/\(messageId)/audio.m4a"
+        let audioPath = "conversations/\(conversationId)/media/\(messageId)_audio.m4a"
         let audioRef = storageRef.child(audioPath)
 
         // Set metadata
@@ -297,8 +349,9 @@ class MediaService {
 
             _ = try await uploadTask
 
-            // Get download URL
-            let audioURL = try await audioRef.downloadURL().absoluteString
+            // Get download URL with retry (avoid 404 immediately after upload)
+            print("📥 Getting audio download URL (with retry)...")
+            let audioURL = try await getDownloadURLWithRetry(ref: audioRef)
 
             print("✅ Audio uploaded successfully: \(audioURL)")
             return audioURL
