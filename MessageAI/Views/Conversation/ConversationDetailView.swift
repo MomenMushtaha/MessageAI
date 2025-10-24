@@ -980,7 +980,8 @@ struct MessageBubbleRow: View {
             print("❌ AI summarize error: \(error.localizedDescription)")
             await MainActor.run {
                 aiError = error.localizedDescription
-                showError(error.localizedDescription)
+                errorMessage = "AI Summarize failed: \(error.localizedDescription)"
+                showErrorAlert = true
             }
         }
     }
@@ -1000,11 +1001,13 @@ struct MessageBubbleRow: View {
             print("❌ AI action items error: \(error.localizedDescription)")
             await MainActor.run {
                 aiError = error.localizedDescription
-                showError(error.localizedDescription)
+                errorMessage = "AI Actions failed: \(error.localizedDescription)"
+                showErrorAlert = true
             }
         }
     }
 
+    @ViewBuilder
     private func actionItemCard(_ action: AIAction) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(action.title)
@@ -1025,7 +1028,8 @@ struct MessageBubbleRow: View {
     }
 
     private func showTemporaryMessage(_ message: String) {
-        showError(message)
+        errorMessage = message
+        showErrorAlert = true
     }
 }
 
