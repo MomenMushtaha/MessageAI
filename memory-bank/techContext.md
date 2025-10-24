@@ -3,7 +3,7 @@
 ### Platforms & Tooling
 - iOS 17+, Xcode 16+, Swift 5
 - SwiftUI, Swift Concurrency (`async/await`), SwiftData
-- Firebase iOS SDK v11.15.0: Auth, **Realtime Database**, Messaging, Analytics, Storage
+- Firebase iOS SDK v11.15.0: Auth, **Realtime Database**, Messaging, Analytics
 - Firebase Cloud Functions (Node.js 18+)
 
 ### Dependencies & setup
@@ -25,7 +25,7 @@
 - `AuthService` – authentication, profile, privacy setting updates (uses Realtime Database)
 - `ChatService` – conversations, messages (simplified version using Realtime Database)
 - `PresenceService` – online presence + last seen (uses Realtime Database)
-- `MediaService` – image/video/audio uploads to Storage
+- `MediaService` – image/video/audio uploads to AWS S3 (CloudFront delivery)
 - `NotificationService`/`PushNotificationService` – in-app banners and FCM (uses Realtime Database)
 - `LocalStorageService` – SwiftData-backed offline cache
 - `CacheManager`, `RateLimiter`, `PerformanceMonitor`, `ErrorRecoveryService`
@@ -42,5 +42,3 @@
   - `FieldValue.serverTimestamp()` → `ServerValue.timestamp()`
   - `Timestamp` → TimeInterval (milliseconds since epoch)
   - `ListenerRegistration` → `DatabaseHandle`
-
-

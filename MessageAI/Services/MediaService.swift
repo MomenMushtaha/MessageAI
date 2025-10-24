@@ -7,14 +7,12 @@
 
 import Foundation
 import UIKit
-import FirebaseStorage
 import AVFoundation
 
 @MainActor
 class MediaService {
     static let shared = MediaService()
 
-    private let storage = Storage.storage()
     private let imageCache = NSCache<NSString, UIImage>()
 
     private init() {
@@ -24,14 +22,7 @@ class MediaService {
 
     // MARK: - Image Upload
 
-    /// Upload an image to Firebase Storage
-    /// - Parameters:
-    ///   - image: UIImage to upload
-    ///   - conversationId: Conversation ID
-    ///   - messageId: Message ID
-    ///   - userId: User ID of the sender
-    ///   - progressHandler: Optional progress callback (0.0 to 1.0)
-    /// - Returns: Tuple of (fullImageURL, thumbnailURL)
+    /// Upload an image to S3/CloudFront (full + thumbnail)
     func uploadImage(
         _ image: UIImage,
         conversationId: String,
@@ -41,95 +32,217 @@ class MediaService {
     ) async throws -> (fullURL: String, thumbnailURL: String) {
         print("📤 Starting image upload for message: \(messageId)")
 
-        // Compress full image (max 2048x2048)
-        guard let fullImageData = compressImage(image, maxDimension: 2048, quality: 0.8) else {
+        guard let fullImageData = compressImage(image, maxDimension: 2048, quality: 0.8),
+              let thumbnailData = compressImage(image, maxDimension: 200, quality: 0.7) else {
             throw MediaError.compressionFailed
         }
 
-        // Generate thumbnail (200x200)
-        guard let thumbnailData = compressImage(image, maxDimension: 200, quality: 0.7) else {
+        let descriptors = [
+            S3FileDescriptor(key: "\(conversationId)/media/\(messageId)_full.jpg", contentType: "image/jpeg"),
+            S3FileDescriptor(key: "\(conversationId)/media/\(messageId)_thumb.jpg", contentType: "image/jpeg")
+        ]
+
+        let targets = try await requestS3UploadURLs(
+            conversationId: conversationId,
+              messageId: messageId,
+              userId: userId,
+              files: descriptors
+        )
+
+        guard targets.count == descriptors.count else {
+            throw MediaError.invalidURL
+        }
+
+        try await httpPUTUpload(
+            to: targets[0].uploadUrl,
+            data: fullImageData,
+            contentType: descriptors[0].contentType,
+            progressHandler: progressHandler
+        )
+
+        try await httpPUTUpload(
+            to: targets[1].uploadUrl,
+            data: thumbnailData,
+            contentType: descriptors[1].contentType,
+            progressHandler: nil
+        )
+
+        print("✅ Image uploaded to S3")
+        return (targets[0].publicUrl, targets[1].publicUrl)
+    }
+
+    /// Upload or replace a group avatar image on S3
+    func uploadGroupAvatar(
+        _ image: UIImage,
+        conversationId: String,
+        adminId: String
+    ) async throws -> String {
+        print("📤 Uploading group avatar for conversation: \(conversationId)")
+
+        guard let imageData = compressImage(image, maxDimension: 1024, quality: 0.8) else {
             throw MediaError.compressionFailed
         }
 
-        let storageRef = storage.reference()
-        let fullImagePath = "conversations/\(conversationId)/media/\(messageId)_full.jpg"
-        let thumbnailPath = "conversations/\(conversationId)/media/\(messageId)_thumb.jpg"
+        let descriptor = S3FileDescriptor(
+            key: "groups/\(conversationId)/avatar/avatar.jpg",
+            contentType: "image/jpeg"
+        )
 
-        let fullImageRef = storageRef.child(fullImagePath)
-        let thumbnailRef = storageRef.child(thumbnailPath)
+        let targets = try await requestS3UploadURLs(
+            conversationId: conversationId,
+            messageId: "group-avatar",
+            userId: adminId,
+            files: [descriptor]
+        )
 
-        // Upload full image
-        let metadata = StorageMetadata()
-        metadata.contentType = "image/jpeg"
-
-        let uploadTask = fullImageRef.putData(fullImageData, metadata: metadata)
-
-        // Observe upload progress
-        uploadTask.observe(.progress) { snapshot in
-            if let progress = snapshot.progress {
-                let percentComplete = Double(progress.completedUnitCount) / Double(progress.totalUnitCount)
-                Task { @MainActor in
-                    progressHandler?(percentComplete)
-                }
-            }
+        guard let target = targets.first else {
+            throw MediaError.invalidURL
         }
 
-        do {
-            // Wait for upload to complete
-            print("⏳ Waiting for full image upload...")
-            let fullUploadResult = try await uploadTask
-            print("✅ Full image uploaded")
-            
-            // Upload thumbnail
-            print("⏳ Uploading thumbnail...")
-            let thumbnailUploadResult = try await thumbnailRef.putData(thumbnailData, metadata: metadata)
-            print("✅ Thumbnail uploaded")
-            
-            // Get download URLs (with retry to avoid eventual-consistency 404)
-            print("📥 Getting full image download URL (with retry)...")
-            let fullURL = try await getDownloadURLWithRetry(ref: fullImageRef)
-            print("✅ Got full image URL: \(fullURL)")
-            
-            print("📥 Getting thumbnail download URL (with retry)...")
-            let thumbnailURL = try await getDownloadURLWithRetry(ref: thumbnailRef)
-            print("✅ Got thumbnail URL: \(thumbnailURL)")
+        try await httpPUTUpload(
+            to: target.uploadUrl,
+            data: imageData,
+            contentType: descriptor.contentType,
+            progressHandler: nil
+        )
 
-            print("✅ Image upload complete - returning URLs")
-            return (fullURL, thumbnailURL)
-            
-        } catch {
-            print("❌ Error in image upload: \(error)")
-            print("❌ Error details: \(error.localizedDescription)")
-            throw error
+        print("✅ Group avatar uploaded to S3")
+        return target.publicUrl
+    }
+
+    // MARK: - Image Download & Caching
+
+    /// Download image with caching support
+    func downloadImage(from url: String) async throws -> UIImage {
+        let cacheKey = NSString(string: url)
+
+        if let cachedImage = imageCache.object(forKey: cacheKey) {
+            print("📥 Image loaded from cache: \(url)")
+            return cachedImage
         }
+
+        guard let imageURL = URL(string: url) else {
+            throw MediaError.invalidURL
+        }
+
+        let (data, _) = try await URLSession.shared.data(from: imageURL)
+
+        guard let image = UIImage(data: data) else {
+            throw MediaError.invalidImageData
+        }
+
+        imageCache.setObject(image, forKey: cacheKey)
+        print("✅ Image downloaded and cached: \(url)")
+        return image
+    }
+
+    func clearCache() {
+        imageCache.removeAllObjects()
+        print("🗑️ Image cache cleared")
+    }
+
+    // MARK: - Video Upload
+
+    /// Upload a video and generated thumbnail to S3/CloudFront
+    func uploadVideo(
+        _ videoURL: URL,
+        conversationId: String,
+        messageId: String,
+        userId: String,
+        progressHandler: ((Double) -> Void)? = nil
+    ) async throws -> (videoURL: String, thumbnailURL: String, duration: TimeInterval) {
+        print("🎥 Starting video upload for message: \(messageId)")
+
+        let asset = AVAsset(url: videoURL)
+        let duration = try await asset.load(.duration).seconds
+
+        guard let thumbnail = try await generateVideoThumbnail(from: videoURL),
+              let thumbnailData = compressImage(thumbnail, maxDimension: 200, quality: 0.7) else {
+            throw MediaError.compressionFailed
+        }
+
+        let videoData = try Data(contentsOf: videoURL)
+
+        let maxSize = 50 * 1024 * 1024
+        guard videoData.count <= maxSize else {
+            throw MediaError.videoTooLarge
+        }
+
+        let descriptors = [
+            S3FileDescriptor(key: "\(conversationId)/media/\(messageId)_video.mp4", contentType: "video/mp4"),
+            S3FileDescriptor(key: "\(conversationId)/media/\(messageId)_video_thumb.jpg", contentType: "image/jpeg")
+        ]
+
+        let targets = try await requestS3UploadURLs(
+            conversationId: conversationId,
+            messageId: messageId,
+            userId: userId,
+            files: descriptors
+        )
+
+        guard targets.count == descriptors.count else {
+            throw MediaError.invalidURL
+        }
+
+        try await httpPUTUpload(
+            to: targets[0].uploadUrl,
+            data: videoData,
+            contentType: descriptors[0].contentType,
+            progressHandler: progressHandler
+        )
+
+        try await httpPUTUpload(
+            to: targets[1].uploadUrl,
+            data: thumbnailData,
+            contentType: descriptors[1].contentType,
+            progressHandler: nil
+        )
+
+        print("✅ Video uploaded to S3")
+        return (targets[0].publicUrl, targets[1].publicUrl, duration)
+    }
+
+    // MARK: - Audio Upload
+
+    /// Upload an audio clip to S3/CloudFront
+    func uploadAudio(
+        _ audioData: Data,
+        conversationId: String,
+        messageId: String,
+        userId: String,
+        duration: TimeInterval,
+        progressHandler: ((Double) -> Void)? = nil
+    ) async throws -> String {
+        print("🎙️ Starting audio upload for message: \(messageId)")
+
+        let descriptor = S3FileDescriptor(
+            key: "\(conversationId)/media/\(messageId)_audio.m4a",
+            contentType: "audio/m4a"
+        )
+
+        let targets = try await requestS3UploadURLs(
+            conversationId: conversationId,
+            messageId: messageId,
+            userId: userId,
+            files: [descriptor]
+        )
+
+        guard let target = targets.first else {
+            throw MediaError.invalidURL
+        }
+
+        try await httpPUTUpload(
+            to: target.uploadUrl,
+            data: audioData,
+            contentType: descriptor.contentType,
+            progressHandler: progressHandler
+        )
+
+        print("✅ Audio uploaded to S3")
+        return target.publicUrl
     }
 
     // MARK: - Helpers
-
-    /// Fetch a download URL with retries to handle Storage eventual consistency (objectNotFound 404 right after upload)
-    private func getDownloadURLWithRetry(ref: StorageReference, maxAttempts: Int = 5) async throws -> String {
-        var attempt = 0
-        var lastError: Error?
-        var delayMs: UInt64 = 200 // start with 200ms
-
-        while attempt < maxAttempts {
-            do {
-                let url = try await ref.downloadURL().absoluteString
-                return url
-            } catch {
-                lastError = error
-                attempt += 1
-                print("⚠️ downloadURL attempt #\(attempt) failed: \(error.localizedDescription)")
-                // Exponential backoff with max ~3.2s
-                let ns = delayMs * 1_000_000
-                try? await Task.sleep(nanoseconds: ns)
-                delayMs = min(delayMs * 2, 3200)
-            }
-        }
-        throw lastError ?? NSError(domain: "MediaService", code: 404, userInfo: [NSLocalizedDescriptionKey: "Failed to get download URL after retries"])
-    }
-
-    // MARK: - Image Compression
 
     private func compressImage(_ image: UIImage, maxDimension: CGFloat, quality: CGFloat) -> Data? {
         let size = image.size
@@ -148,133 +261,6 @@ class MediaService {
         return scaledImage?.jpegData(compressionQuality: quality)
     }
 
-    // MARK: - Image Download & Caching
-
-    /// Download image with caching
-    func downloadImage(from url: String) async throws -> UIImage {
-        let cacheKey = NSString(string: url)
-
-        // Check cache first
-        if let cachedImage = imageCache.object(forKey: cacheKey) {
-            print("📥 Image loaded from cache: \(url)")
-            return cachedImage
-        }
-
-        // Download from URL
-        guard let imageURL = URL(string: url) else {
-            throw MediaError.invalidURL
-        }
-
-        let (data, _) = try await URLSession.shared.data(from: imageURL)
-
-        guard let image = UIImage(data: data) else {
-            throw MediaError.invalidImageData
-        }
-
-        // Cache the image
-        imageCache.setObject(image, forKey: cacheKey)
-        print("✅ Image downloaded and cached: \(url)")
-
-        return image
-    }
-
-    // MARK: - Cache Management
-
-    func clearCache() {
-        imageCache.removeAllObjects()
-        print("🗑️ Image cache cleared")
-    }
-
-    // MARK: - Video Upload
-
-    /// Upload a video to Firebase Storage with thumbnail generation
-    /// - Parameters:
-    ///   - videoURL: URL to the video file
-    ///   - conversationId: Conversation ID
-    ///   - messageId: Message ID
-    ///   - userId: User ID of the sender
-    ///   - progressHandler: Optional progress callback (0.0 to 1.0)
-    /// - Returns: Tuple of (videoURL, thumbnailURL, duration)
-    func uploadVideo(
-        _ videoURL: URL,
-        conversationId: String,
-        messageId: String,
-        userId: String,
-        progressHandler: ((Double) -> Void)? = nil
-    ) async throws -> (videoURL: String, thumbnailURL: String, duration: TimeInterval) {
-        print("📤 Starting video upload for message: \(messageId)")
-
-        // Get video duration
-        let asset = AVAsset(url: videoURL)
-        let duration = try await asset.load(.duration).seconds
-
-        // Generate thumbnail from first frame
-        guard let thumbnail = try await generateVideoThumbnail(from: videoURL) else {
-            throw MediaError.compressionFailed
-        }
-
-        // Compress thumbnail
-        guard let thumbnailData = compressImage(thumbnail, maxDimension: 200, quality: 0.7) else {
-            throw MediaError.compressionFailed
-        }
-
-        // Read video data
-        let videoData = try Data(contentsOf: videoURL)
-
-        // Check video size (max 50MB)
-        let maxSize = 50 * 1024 * 1024
-        guard videoData.count <= maxSize else {
-            throw MediaError.videoTooLarge
-        }
-
-        let storageRef = storage.reference()
-        let videoPath = "conversations/\(conversationId)/media/\(messageId)_video.mp4"
-        let thumbnailPath = "conversations/\(conversationId)/media/\(messageId)_video_thumb.jpg"
-
-        let videoRef = storageRef.child(videoPath)
-        let thumbnailRef = storageRef.child(thumbnailPath)
-
-        // Set video metadata
-        let videoMetadata = StorageMetadata()
-        videoMetadata.contentType = "video/mp4"
-        videoMetadata.customMetadata = [
-            "duration": String(duration),
-            "messageId": messageId
-        ]
-
-        // Upload video with progress tracking
-        let uploadTask = videoRef.putData(videoData, metadata: videoMetadata)
-
-        uploadTask.observe(.progress) { snapshot in
-            if let progress = snapshot.progress {
-                let percentComplete = Double(progress.completedUnitCount) / Double(progress.totalUnitCount)
-                Task { @MainActor in
-                    progressHandler?(percentComplete)
-                }
-            }
-        }
-
-        _ = try await uploadTask
-
-        // Upload thumbnail
-        let thumbnailMetadata = StorageMetadata()
-        thumbnailMetadata.contentType = "image/jpeg"
-        _ = try await thumbnailRef.putData(thumbnailData, metadata: thumbnailMetadata)
-
-        // Get download URLs with retry (avoid eventual 404)
-        print("📥 Getting video download URL (with retry)...")
-        let videoDownloadURL = try await getDownloadURLWithRetry(ref: videoRef)
-        print("✅ Got video URL: \(videoDownloadURL)")
-
-        print("📥 Getting video thumbnail URL (with retry)...")
-        let thumbnailDownloadURL = try await getDownloadURLWithRetry(ref: thumbnailRef)
-        print("✅ Got video thumbnail URL: \(thumbnailDownloadURL)")
-
-        print("✅ Video uploaded successfully: \(videoDownloadURL)")
-        return (videoDownloadURL, thumbnailDownloadURL, duration)
-    }
-
-    /// Generate a thumbnail image from the first frame of a video
     private func generateVideoThumbnail(from url: URL) async throws -> UIImage? {
         let asset = AVAsset(url: url)
         let imageGenerator = AVAssetImageGenerator(asset: asset)
@@ -301,66 +287,93 @@ class MediaService {
         }
     }
 
-    // MARK: - Audio Upload
-
-    /// Upload an audio file to Firebase Storage
-    /// - Parameters:
-    ///   - audioData: Audio data to upload
-    ///   - conversationId: Conversation ID
-    ///   - messageId: Message ID
-    ///   - userId: User ID of the sender
-    ///   - duration: Audio duration in seconds
-    ///   - progressHandler: Optional progress callback (0.0 to 1.0)
-    /// - Returns: Audio file URL
-    func uploadAudio(
-        _ audioData: Data,
+    private func requestS3UploadURLs(
         conversationId: String,
         messageId: String,
         userId: String,
-        duration: TimeInterval,
-        progressHandler: ((Double) -> Void)? = nil
-    ) async throws -> String {
-        print("📤 Starting audio upload for message: \(messageId)")
+        files: [S3FileDescriptor]
+    ) async throws -> [S3UploadTarget] {
+        guard let endpoint = AppConfig.s3UploadEndpoint else {
+            throw MediaError.invalidURL
+        }
 
-        let storageRef = storage.reference()
-        let audioPath = "conversations/\(conversationId)/media/\(messageId)_audio.m4a"
-        let audioRef = storageRef.child(audioPath)
-
-        // Set metadata
-        let metadata = StorageMetadata()
-        metadata.contentType = "audio/m4a"
-        metadata.customMetadata = [
-            "duration": String(duration),
-            "messageId": messageId
+        let body: [String: Any] = [
+            "conversationId": conversationId,
+            "messageId": messageId,
+            "userId": userId,
+            "files": files.map { ["key": $0.key, "contentType": $0.contentType] }
         ]
 
-        do {
-            // Upload with progress tracking
-            let uploadTask = audioRef.putData(audioData, metadata: metadata)
+        let (data, _) = try await httpJSONRequest(urlString: endpoint, body: body)
 
-            uploadTask.observe(.progress) { snapshot in
-                if let progress = snapshot.progress {
-                    let percentComplete = Double(progress.completedUnitCount) / Double(progress.totalUnitCount)
-                    Task { @MainActor in
-                        progressHandler?(percentComplete)
-                    }
-                }
+        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let urls = json["urls"] as? [[String: String]],
+              !urls.isEmpty else {
+            throw MediaError.invalidURL
+        }
+
+        var targetsByKey: [String: S3UploadTarget] = [:]
+        for entry in urls {
+            guard let key = entry["key"],
+                  let uploadUrl = entry["uploadUrl"],
+                  let publicUrl = entry["publicUrl"] else {
+                throw MediaError.invalidURL
             }
+            targetsByKey[key] = S3UploadTarget(key: key, uploadUrl: uploadUrl, publicUrl: publicUrl)
+        }
 
-            _ = try await uploadTask
-
-            // Get download URL with retry (avoid 404 immediately after upload)
-            print("📥 Getting audio download URL (with retry)...")
-            let audioURL = try await getDownloadURLWithRetry(ref: audioRef)
-
-            print("✅ Audio uploaded successfully: \(audioURL)")
-            return audioURL
-
-        } catch {
-            print("❌ Audio upload failed: \(error.localizedDescription)")
-            throw MediaError.uploadFailed
+        return try files.map { file in
+            guard let target = targetsByKey[file.key] else {
+                throw MediaError.invalidURL
+            }
+            return target
         }
     }
+
+    private func httpJSONRequest(urlString: String, body: [String: Any]) async throws -> (Data, URLResponse) {
+        guard let url = URL(string: urlString) else {
+            throw MediaError.invalidURL
+        }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        return try await URLSession.shared.data(for: request)
+    }
+
+    private func httpPUTUpload(
+        to urlString: String,
+        data: Data,
+        contentType: String,
+        progressHandler: ((Double) -> Void)?
+    ) async throws {
+        guard let url = URL(string: urlString) else {
+            throw MediaError.invalidURL
+        }
+        var request = URLRequest(url: url)
+        request.httpMethod = "PUT"
+        request.setValue(contentType, forHTTPHeaderField: "Content-Type")
+
+        let (_, response) = try await URLSession.shared.upload(for: request, from: data)
+        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+            throw MediaError.uploadFailed
+        }
+
+        progressHandler?(1.0)
+    }
+}
+
+// MARK: - S3 Helper Models
+
+private struct S3FileDescriptor {
+    let key: String
+    let contentType: String
+}
+
+private struct S3UploadTarget {
+    let key: String
+    let uploadUrl: String
+    let publicUrl: String
 }
 
 // MARK: - Media Errors

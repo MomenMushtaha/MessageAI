@@ -32,9 +32,25 @@ class LocalStorageService {
     // MARK: - Messages
     
     func saveMessage(_ message: Message, status: String = "sent", isSynced: Bool = true) throws {
-        let localMessage = LocalMessage(from: message, isSynced: isSynced)
-        localMessage.status = status
-        modelContext.insert(localMessage)
+        let predicate = #Predicate<LocalMessage> { $0.id == message.id }
+        let descriptor = FetchDescriptor(predicate: predicate)
+        if let existing = try modelContext.fetch(descriptor).first {
+            existing.text = message.text
+            existing.createdAt = message.createdAt
+            existing.status = status
+            existing.isSynced = isSynced
+            existing.deliveredTo = message.deliveredTo
+            existing.readBy = message.readBy
+            existing.mediaType = message.mediaType
+            existing.mediaURL = message.mediaURL
+            existing.thumbnailURL = message.thumbnailURL
+            existing.audioDuration = message.audioDuration
+            existing.videoDuration = message.videoDuration
+        } else {
+            let localMessage = LocalMessage(from: message, isSynced: isSynced)
+            localMessage.status = status
+            modelContext.insert(localMessage)
+        }
         try modelContext.save()
         print("💾 Saved message locally: \(message.id)")
     }
@@ -149,4 +165,3 @@ class LocalStorageService {
         }
     }
 }
-

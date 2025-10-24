@@ -24,7 +24,7 @@ Date: 2025-10-24
   - Message pinning (max 3 per conversation, admin-only for groups)
   - Message search (local cache)
   - Pagination (load older messages)
-  - Media messages (image, video, voice) with Storage upload
+  - Media messages (image, video, voice) with S3 uploads
   - Group management (add/remove participants, admins, permissions)
 - **Enhanced ConversationDetailView** with:
   - Context menus for message actions
@@ -54,5 +54,4 @@ Date: 2025-10-24
 - **NEW**: Realtime Database has different querying capabilities than Firestore (no compound queries)
 - **NEW**: Need to update database.rules.json for Realtime Database security
 - **NEW**: Simplified ChatService may need additional methods restored (media, reactions, editing, etc.)
-
 

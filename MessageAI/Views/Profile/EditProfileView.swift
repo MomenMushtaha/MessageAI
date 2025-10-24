@@ -65,7 +65,7 @@ struct EditProfileView: View {
                             }
                             .onChange(of: selectedPhotoItem) { _, _ in
                                 // Photo upload would be implemented here
-                                // Currently blocked by Firebase Storage setup
+                                // TODO: Wire up MediaService to upload avatars to S3
                             }
                         }
 

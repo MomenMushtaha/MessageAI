@@ -7,7 +7,6 @@
 
 import Foundation
 import FirebaseDatabase
-import FirebaseStorage
 import Combine
 import UIKit
 
@@ -1153,8 +1152,8 @@ class ChatService: ObservableObject {
         }
         
         do {
-            // Upload image to Firebase Storage
-            print("📤 Uploading image to Storage...")
+            // Upload image to S3 / CloudFront
+            print("📤 Uploading image to S3...")
             let (fullURL, thumbnailURL) = try await MediaService.shared.uploadImage(
                 image,
                 conversationId: conversationId,
@@ -1471,23 +1470,11 @@ class ChatService: ObservableObject {
             throw NSError(domain: "ChatService", code: 403, userInfo: [NSLocalizedDescriptionKey: "Only admins can update group avatar"])
         }
         
-        // Upload image to Storage
-        guard let imageData = image.jpegData(compressionQuality: 0.8) else {
-            throw NSError(domain: "ChatService", code: 400, userInfo: [NSLocalizedDescriptionKey: "Failed to process image"])
-        }
-
-        let storage = Storage.storage()
-        let avatarPath = "groups/\(conversationId)/avatar/avatar.jpg"
-        let avatarRef = storage.reference().child(avatarPath)
-
-        let metadata = StorageMetadata()
-        metadata.contentType = "image/jpeg"
-
-        _ = try await avatarRef.putData(imageData, metadata: metadata)
-        let downloadURL = try await avatarRef.downloadURL()
+        // Upload avatar to S3
+        let avatarURL = try await MediaService.shared.uploadGroupAvatar(image, conversationId: conversationId, adminId: adminId)
         
         // Update conversation
-        try await conversationRef.child("groupAvatarURL").setValue(downloadURL.absoluteString)
+        try await conversationRef.child("groupAvatarURL").setValue(avatarURL)
         
         print("✅ Updated group avatar")
     }
@@ -1764,7 +1751,7 @@ struct Message: Identifiable, Codable, Hashable {
     var editHistory: [String]? // Array of previous message text versions (optional)
     var reactions: [String: [String]]? // Dictionary of emoji -> array of user IDs who reacted
     var mediaType: String? // Type of media: "image", "video", "audio", "file"
-    var mediaURL: String? // URL to full-size media in Firebase Storage
+    var mediaURL: String? // URL to full-size media served via CloudFront
     var thumbnailURL: String? // URL to thumbnail for images/videos
     var audioDuration: TimeInterval? // Duration in seconds for audio messages
     var videoDuration: TimeInterval? // Duration in seconds for video messages

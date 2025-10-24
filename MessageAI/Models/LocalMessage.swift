@@ -19,8 +19,28 @@ final class LocalMessage {
     var isSynced: Bool
     var deliveredToString: String // Comma-separated user IDs
     var readByString: String // Comma-separated user IDs
+    var mediaType: String?
+    var mediaURL: String?
+    var thumbnailURL: String?
+    var audioDuration: Double?
+    var videoDuration: Double?
     
-    init(id: String, conversationId: String, senderId: String, text: String, createdAt: Date, status: String = "sending", isSynced: Bool = false, deliveredTo: [String] = [], readBy: [String] = []) {
+    init(
+        id: String,
+        conversationId: String,
+        senderId: String,
+        text: String,
+        createdAt: Date,
+        status: String = "sending",
+        isSynced: Bool = false,
+        deliveredTo: [String] = [],
+        readBy: [String] = [],
+        mediaType: String? = nil,
+        mediaURL: String? = nil,
+        thumbnailURL: String? = nil,
+        audioDuration: Double? = nil,
+        videoDuration: Double? = nil
+    ) {
         self.id = id
         self.conversationId = conversationId
         self.senderId = senderId
@@ -30,6 +50,11 @@ final class LocalMessage {
         self.isSynced = isSynced
         self.deliveredToString = deliveredTo.joined(separator: ",")
         self.readByString = readBy.joined(separator: ",")
+        self.mediaType = mediaType
+        self.mediaURL = mediaURL
+        self.thumbnailURL = thumbnailURL
+        self.audioDuration = audioDuration
+        self.videoDuration = videoDuration
     }
     
     // Helper properties for array access
@@ -54,7 +79,12 @@ final class LocalMessage {
             status: message.status,
             isSynced: isSynced,
             deliveredTo: message.deliveredTo,
-            readBy: message.readBy
+            readBy: message.readBy,
+            mediaType: message.mediaType,
+            mediaURL: message.mediaURL,
+            thumbnailURL: message.thumbnailURL,
+            audioDuration: message.audioDuration,
+            videoDuration: message.videoDuration
         )
     }
     
@@ -68,8 +98,12 @@ final class LocalMessage {
             createdAt: createdAt,
             status: status,
             deliveredTo: deliveredTo,
-            readBy: readBy
+            readBy: readBy,
+            mediaType: mediaType,
+            mediaURL: mediaURL,
+            thumbnailURL: thumbnailURL,
+            audioDuration: audioDuration,
+            videoDuration: videoDuration
         )
     }
 }
-

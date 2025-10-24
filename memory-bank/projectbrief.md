@@ -20,12 +20,13 @@ Build a production-ready iOS messaging app that showcases modern SwiftUI pattern
 ### Success Criteria
 - Perceived send latency <200ms via optimistic UI
 - Smooth scrolling at 60fps in large chats
-- Significantly reduced Firestore reads via caching and selective listeners
+- Significantly reduced Realtime Database reads via caching and selective listeners
 
 ### Constraints
 - iOS 17+, Xcode 16+, Swift 5
-- Firebase iOS SDK v11.15.0 (Auth, Firestore, Messaging, Analytics)
-- Firestore with offline persistence enabled
+- Firebase iOS SDK v11.15.0 (Auth, Realtime Database, Messaging, Analytics)
+- Realtime Database with offline persistence enabled
+- AWS S3 bucket + CloudFront distribution for media delivery
 
 ### Deliverables
 - SwiftUI app with services under `MessageAI/Services/`
@@ -35,9 +36,7 @@ Build a production-ready iOS messaging app that showcases modern SwiftUI pattern
 ### High-Level Features
 - Authentication: Email/Password
 - Conversations: Direct and Group (admin permissions, pinned messages)
-- Messages: Text, image, video, voice with reactions and editing
+- Messages: Text, image, video, voice with reactions and editing (media persisted to S3/CloudFront)
 - Presence: Online status, last seen, badge counts
 - Notifications: In-app banners and FCM push
 - Local Storage: SwiftData for messages and conversations
-
-

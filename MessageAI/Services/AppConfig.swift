@@ -1,0 +1,22 @@
+//
+//  AppConfig.swift
+//  MessageAI
+//
+//  Centralized app configuration loaded from Info.plist
+//
+
+import Foundation
+
+enum AppConfig {
+    // HTTPS endpoint for generating pre-signed upload URLs
+    // Example: https://us-central1-your-project.cloudfunctions.net/generateUploadUrl
+    static var s3UploadEndpoint: String? {
+        if let value = Bundle.main.object(forInfoDictionaryKey: "S3_UPLOAD_ENDPOINT") as? String, !value.isEmpty {
+            return value
+        }
+        if let env = ProcessInfo.processInfo.environment["S3_UPLOAD_ENDPOINT"], !env.isEmpty {
+            return env
+        }
+        return nil
+    }
+}

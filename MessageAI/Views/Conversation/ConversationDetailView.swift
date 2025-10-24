@@ -75,45 +75,45 @@ struct ConversationDetailView: View {
     var body: some View {
         VStack(spacing: 0) {
             // Messages List
-            ScrollViewReader { proxy in
-                ScrollView {
-                    LazyVStack(spacing: 8) {
-                        if currentMessages.isEmpty {
-                            emptyMessagesView
-                        } else {
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        LazyVStack(spacing: 8) {
+                            if currentMessages.isEmpty {
+                                emptyMessagesView
+                            } else {
                             // Load more button
-                            if chatService.hasMoreMessages[conversation.id] == true {
+                                if chatService.hasMoreMessages[conversation.id] == true {
                                 loadMoreButton
-                            }
-                            
-                            ForEach(currentMessages) { message in
-                                MessageBubbleRow(
-                                    message: message,
-                                    isFromCurrentUser: message.senderId == authService.currentUser?.id,
-                                    conversation: conversation,
-                                    currentUserId: authService.currentUser?.id ?? ""
-                                )
+                                }
+
+                                ForEach(currentMessages) { message in
+                                    MessageBubbleRow(
+                                        message: message,
+                                        isFromCurrentUser: message.senderId == authService.currentUser?.id,
+                                        conversation: conversation,
+                                                currentUserId: authService.currentUser?.id ?? ""
+                                            )
                                 .id(message.id)
                                 .contextMenu {
                                     messageContextMenu(for: message)
+                                    }
                                 }
                             }
                         }
-                    }
-                    .padding()
+                        .padding()
                 }
-                .scrollDismissesKeyboard(.interactively)
-                .onChange(of: currentMessages.count) { oldValue, newValue in
-                    if shouldAutoScroll, newValue > oldValue {
+                    .scrollDismissesKeyboard(.interactively)
+                    .onChange(of: currentMessages.count) { oldValue, newValue in
+                        if shouldAutoScroll, newValue > oldValue {
                         scrollToBottom(proxy: proxy)
+                        }
+                    }
+                    .onAppear {
+                        scrollProxy = proxy
+                        scrollToBottom(proxy: proxy, animated: false)
                     }
                 }
-                .onAppear {
-                    scrollProxy = proxy
-                    scrollToBottom(proxy: proxy, animated: false)
-                }
-            }
-            
+                
             // Typing indicator
             if !typingUsers.isEmpty {
                 typingIndicatorView
@@ -126,16 +126,16 @@ struct ConversationDetailView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .principal) {
-                VStack(spacing: 2) {
+                    VStack(spacing: 2) {
                     Text(navigationTitle)
-                        .font(.headline)
+                            .font(.headline)
                     if conversation.type == .direct, let otherUser = otherUser {
                         Text(presenceText)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
                     }
                 }
-            }
         }
         .sheet(isPresented: $showEditSheet) {
             editMessageSheet
@@ -148,13 +148,13 @@ struct ConversationDetailView: View {
         }
         .confirmationDialog("Delete Message", isPresented: $showDeleteConfirmation, presenting: selectedMessage) { message in
             Button("Delete for Me", role: .destructive) {
-                Task {
+                        Task {
                     await deleteMessage(message, deleteForEveryone: false)
                 }
             }
             if message.senderId == authService.currentUser?.id {
                 Button("Delete for Everyone", role: .destructive) {
-                    Task {
+                        Task {
                         await deleteMessage(message, deleteForEveryone: true)
                     }
                 }
@@ -207,7 +207,7 @@ struct ConversationDetailView: View {
                     }
                 } label: {
                     Text("Load Earlier Messages")
-                        .font(.subheadline)
+                    .font(.subheadline)
                         .foregroundStyle(.blue)
                 }
                 .padding()
@@ -216,11 +216,11 @@ struct ConversationDetailView: View {
     }
     
     private var typingIndicatorView: some View {
-        HStack {
+                HStack {
             Text(typingText)
                 .font(.caption)
                 .foregroundStyle(.secondary)
-            Spacer()
+                    Spacer()
         }
         .padding(.horizontal)
         .padding(.vertical, 4)
@@ -237,14 +237,14 @@ struct ConversationDetailView: View {
     }
 
     private var messageInputView: some View {
-        HStack(spacing: 12) {
+            HStack(spacing: 12) {
             // Photo picker
             PhotosPicker(selection: $selectedPhotoItem, matching: .images) {
-                Image(systemName: "photo")
+                    Image(systemName: "photo")
                     .font(.title3)
-                    .foregroundStyle(.blue)
-            }
-            .onChange(of: selectedPhotoItem) { _, newItem in
+                        .foregroundStyle(.blue)
+                }
+                .onChange(of: selectedPhotoItem) { _, newItem in
                 Task {
                     await handlePhotoSelection(newItem)
                 }
@@ -252,10 +252,10 @@ struct ConversationDetailView: View {
             .disabled(isUploadingMedia)
 
             // Microphone button (for voice recording)
-            Button(action: {
-                startVoiceRecording()
-            }) {
-                Image(systemName: "mic.fill")
+                    Button(action: {
+                        startVoiceRecording()
+                    }) {
+                            Image(systemName: "mic.fill")
                     .font(.title3)
                     .foregroundStyle(.blue)
             }
@@ -271,12 +271,12 @@ struct ConversationDetailView: View {
                 .lineLimit(1...6)
                 .disabled(!canSendMessage)
 
-            // Send Button
-            Button(action: {
-                Task {
-                    await sendMessage()
-                }
-            }) {
+                    // Send Button
+                    Button(action: {
+                        Task {
+                            await sendMessage()
+                        }
+                    }) {
                 Image(systemName: isUploadingMedia ? "arrow.up.circle" : "arrow.up.circle.fill")
                     .font(.system(size: 32))
                     .foregroundStyle(messageText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? .gray : .blue)
@@ -330,7 +330,7 @@ struct ConversationDetailView: View {
             LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 6), spacing: 16) {
                 ForEach(["❤️", "👍", "👎", "😂", "😮", "😢", "🎉", "🔥"], id: \.self) { emoji in
                     Button {
-                        Task {
+                Task {
                             await addReaction(emoji)
                         }
                     } label: {
@@ -349,7 +349,7 @@ struct ConversationDetailView: View {
             audioService: audioService,
             isRecording: $isRecordingVoice,
             onSend: { url, duration in
-                Task {
+        Task {
                     await sendVoiceMessage(url: url, duration: duration)
                 }
             },
@@ -373,10 +373,10 @@ struct ConversationDetailView: View {
 
     private var presenceText: String {
         if otherUserPresence.isOnline {
-            return "Online"
+                return "Online"
         } else if let lastSeen = otherUserPresence.lastSeen {
             return formatLastSeen(lastSeen)
-        } else {
+            } else {
             return ""
         }
     }
@@ -407,7 +407,7 @@ struct ConversationDetailView: View {
             // Others' messages
             Button(role: .destructive) {
                 selectedMessage = message
-                Task {
+        Task {
                     await deleteMessage(message, deleteForEveryone: false)
                 }
             } label: {
@@ -438,7 +438,7 @@ struct ConversationDetailView: View {
         let textToSend = trimmedText
         messageText = ""
         isSending = true
-        
+
         do {
             try await chatService.sendMessage(
                 conversationId: conversation.id,
@@ -454,7 +454,7 @@ struct ConversationDetailView: View {
         
         isSending = false
     }
-    
+
     private func handlePhotoSelection(_ item: PhotosPickerItem?) async {
         guard let item = item,
               let userId = authService.currentUser?.id else { return }
@@ -462,9 +462,9 @@ struct ConversationDetailView: View {
         isUploadingMedia = true
         uploadProgress = 0
 
-        do {
-            guard let imageData = try await item.loadTransferable(type: Data.self),
-                  let image = UIImage(data: imageData) else {
+            do {
+                    guard let imageData = try await item.loadTransferable(type: Data.self),
+                          let image = UIImage(data: imageData) else {
                 throw NSError(domain: "ConversationDetailView", code: 400, userInfo: [NSLocalizedDescriptionKey: "Failed to load image"])
             }
 
@@ -554,10 +554,10 @@ struct ConversationDetailView: View {
             selectedMessage = nil
         } catch {
             errorMessage = error.localizedDescription
-            showErrorAlert = true
+                showErrorAlert = true
+            }
         }
-    }
-    
+
     private func deleteMessage(_ message: Message, deleteForEveryone: Bool) async {
         do {
             try await chatService.deleteMessage(
@@ -584,9 +584,9 @@ struct ConversationDetailView: View {
                 conversationId: conversation.id,
                 userId: userId
             )
-        } catch {
+            } catch {
             errorMessage = error.localizedDescription
-            showErrorAlert = true
+                    showErrorAlert = true
         }
     }
 
@@ -617,7 +617,7 @@ struct ConversationDetailView: View {
         guard let userId = otherUser?.id else { return }
         
         presenceListener = PresenceService.shared.observeUserPresence(userId: userId) { isOnline, lastSeen in
-            Task { @MainActor in
+                    Task { @MainActor in
                 self.otherUserPresence = (isOnline, lastSeen)
             }
         }
@@ -738,7 +738,7 @@ struct MessageBubbleRow: View {
     var body: some View {
         VStack(alignment: isFromCurrentUser ? .trailing : .leading, spacing: 4) {
             HStack {
-                if isFromCurrentUser {
+            if isFromCurrentUser {
                     Spacer()
                     messageBubble
                         .background(Color.blue)
@@ -759,7 +759,7 @@ struct MessageBubbleRow: View {
     }
     
     private var messageBubble: some View {
-        VStack(alignment: isFromCurrentUser ? .trailing : .leading, spacing: 4) {
+            VStack(alignment: isFromCurrentUser ? .trailing : .leading, spacing: 4) {
             // Media content
             if let mediaType = message.mediaType {
                 mediaContentView(mediaType)
@@ -767,9 +767,9 @@ struct MessageBubbleRow: View {
             
             // Text content
             if !message.text.isEmpty {
-                Text(message.text)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
+                        Text(message.text)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 8)
             }
             
             // Metadata
@@ -778,19 +778,19 @@ struct MessageBubbleRow: View {
                     .font(.caption2)
                     .foregroundStyle(isFromCurrentUser ? .white.opacity(0.7) : .secondary)
                 
-                if message.wasEdited {
-                    Text("edited")
+                                if message.wasEdited {
+                                    Text("edited")
                         .font(.caption2)
                         .foregroundStyle(isFromCurrentUser ? .white.opacity(0.7) : .secondary)
                 }
                 
                 if isFromCurrentUser {
-                    statusIcon
-                }
-            }
+                                statusIcon
+                            }
+                        }
             .padding(.horizontal, 12)
-            .padding(.bottom, 4)
-        }
+                        .padding(.bottom, 4)
+                    }
         .background(isFromCurrentUser ? Color.blue : Color(.systemGray5))
         .cornerRadius(16)
     }
@@ -799,8 +799,9 @@ struct MessageBubbleRow: View {
     private func mediaContentView(_ mediaType: String) -> some View {
         switch mediaType {
         case "image":
-            if let thumbnailURL = message.thumbnailURL {
-                AsyncImage(url: URL(string: thumbnailURL)) { image in
+            if let imageURLString = message.thumbnailURL ?? message.mediaURL,
+               let imageURL = URL(string: imageURLString) {
+                AsyncImage(url: imageURL) { image in
                     image
                         .resizable()
                         .scaledToFill()
@@ -814,9 +815,10 @@ struct MessageBubbleRow: View {
                 .padding(8)
             }
         case "video":
-            if let thumbnailURL = message.thumbnailURL {
+            if let thumbnailURLString = message.thumbnailURL ?? message.mediaURL,
+               let thumbnailURL = URL(string: thumbnailURLString) {
                 ZStack {
-                    AsyncImage(url: URL(string: thumbnailURL)) { image in
+                    AsyncImage(url: thumbnailURL) { image in
                         image
                             .resizable()
                             .scaledToFill()

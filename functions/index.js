@@ -6,6 +6,8 @@
 
 const functions = require('firebase-functions');
 const admin = require('firebase-admin');
+const { S3Client, PutObjectCommand } = require('@aws-sdk/client-s3');
+const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 
 admin.initializeApp();
 
@@ -263,3 +265,50 @@ exports.cleanupOldTokens = functions.pubsub
       return null;
     }
   });
+
+/**
+ * Generate S3 pre-signed URLs for client uploads.
+ * Expects POST with JSON body:
+ * { conversationId, messageId, userId, files: [{ key, contentType }] }
+ * Returns: { urls: [{ key, uploadUrl, publicUrl }] }
+ */
+exports.generateUploadUrl = functions.https.onRequest(async (req, res) => {
+  try {
+    if (req.method !== 'POST') return res.status(405).send('Method Not Allowed');
+
+    const { conversationId, messageId, userId, files } = req.body || {};
+    if (!conversationId || !messageId || !userId || !Array.isArray(files)) {
+      return res.status(400).json({ error: 'Invalid payload' });
+    }
+
+    const cfg = functions.config() || {};
+    const region = process.env.AWS_REGION || cfg.aws?.region;
+    const bucket = process.env.S3_BUCKET || cfg.aws?.bucket;
+    const cloudfront = process.env.CLOUDFRONT_DOMAIN || cfg.aws?.cloudfront_domain; // optional
+    const accessKeyId = process.env.AWS_ACCESS_KEY_ID || cfg.aws?.access_key_id;
+    const secretAccessKey = process.env.AWS_SECRET_ACCESS_KEY || cfg.aws?.secret_access_key;
+    const sessionToken = process.env.AWS_SESSION_TOKEN || cfg.aws?.session_token;
+
+    const s3 = new S3Client({
+      region,
+      credentials: accessKeyId && secretAccessKey ? { accessKeyId, secretAccessKey, sessionToken } : undefined,
+    });
+
+    const results = [];
+    for (const f of files) {
+      const key = f.key;
+      const contentType = f.contentType || 'application/octet-stream';
+      const put = new PutObjectCommand({ Bucket: bucket, Key: key, ContentType: contentType });
+      const uploadUrl = await getSignedUrl(s3, put, { expiresIn: 60 });
+      const publicUrl = cloudfront
+        ? `https://${cloudfront}/${encodeURIComponent(key)}`
+        : `https://${bucket}.s3.${region}.amazonaws.com/${encodeURIComponent(key)}`;
+      results.push({ key, uploadUrl, publicUrl });
+    }
+
+    res.json({ urls: results });
+  } catch (err) {
+    console.error('generateUploadUrl error', err);
+    res.status(500).json({ error: 'Internal error' });
+  }
+});

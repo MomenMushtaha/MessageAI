@@ -9,7 +9,7 @@ All 10 steps of the incremental MVP plan have been successfully implemented and 
 ## ✨ Features
 
 ### Core Messaging
-- 💬 **Real-time messaging** - Instant message delivery via Firebase Firestore
+- 💬 **Real-time messaging** - Instant message delivery via Firebase Realtime Database
 - 👥 **Group chats** - Multi-user conversations with participant management
 - 📝 **Message status** - WhatsApp-style checkmarks (sent, delivered, read)
 - 💾 **Offline support** - Messages work offline and sync when reconnected
@@ -41,7 +41,8 @@ All 10 steps of the incremental MVP plan have been successfully implemented and 
 ### Technical Excellence
 - 📱 **SwiftUI** - Modern declarative UI framework
 - 💾 **SwiftData** - Local persistence with CoreData successor
-- 🔥 **Firebase** - Firestore, Auth, and real-time sync
+- 🔥 **Firebase** - Auth, Realtime Database, Messaging, Analytics
+- ☁️ **AWS S3 + CloudFront** - Secure media storage with CDN delivery
 - 🌐 **Network monitoring** - Offline banner and auto-sync
 - 🚀 **Performance optimized** - Limited queries, lazy loading, 60fps animations
 
@@ -50,8 +51,9 @@ All 10 steps of the incremental MVP plan have been successfully implemented and 
 - **SwiftUI** - Modern declarative UI framework
 - **SwiftData** - Core Data successor for data persistence
 - **Firebase Auth** - Email/password authentication
-- **Firebase Firestore** - Real-time database with offline support
+- **Firebase Realtime Database** - Real-time database with offline support
 - **Firebase Cloud Messaging (FCM)** - Push notifications
+- **AWS S3 + CloudFront** - Media storage and CDN delivery
 - **iOS 17+** - Target platform
 
 ## Requirements
@@ -84,6 +86,34 @@ Before running the app, you need to configure Firebase:
    - Generate APNs key in Apple Developer Console
    - Upload the APNs key to Firebase Console under Project Settings → Cloud Messaging
 
+## AWS S3 + CloudFront Setup
+
+MessageAI stores media assets (images, videos, audio, group avatars) in Amazon S3 and serves them through CloudFront. The iOS client requests pre-signed PUT URLs from the Firebase Cloud Function `generateUploadUrl` and uploads directly to S3.
+
+1. **Provision AWS resources**
+   - Create an S3 bucket (recommended: enable private ACLs and block public access)
+   - (Optional) Create a CloudFront distribution that points to the bucket and note the distribution domain
+
+2. **Configure function environment**
+   ```bash
+   firebase functions:config:set \
+     aws.bucket="your-bucket-name" \
+     aws.region="your-region" \
+     aws.cloudfront_domain="d123.cloudfront.net" # optional
+   ```
+   Alternatively, you can set the `S3_BUCKET`, `AWS_REGION`, and `CLOUDFRONT_DOMAIN` environment variables before deploying.
+
+3. **Deploy Cloud Functions**
+   ```bash
+   cd functions
+   npm install
+   npm run deploy -- --only functions:generateUploadUrl
+   ```
+
+4. **Point the iOS app at the function endpoint**
+   - Update `Info.plist` → `S3_UPLOAD_ENDPOINT` with the HTTPS URL of the deployed function (for example `https://us-central1-your-project.cloudfunctions.net/generateUploadUrl`)
+   - Ensure the endpoint is accessible from the device; the client will fail to upload media if this value is missing or incorrect
+
 ## Getting Started
 
 1. Clone the repository
@@ -106,7 +136,7 @@ open MessageAI.xcodeproj
 The following Firebase packages are automatically installed via Swift Package Manager:
 
 - **FirebaseAuth** - User authentication
-- **FirebaseFirestore** - Real-time database (includes Codable/Swift support)
+- **FirebaseDatabase** - Real-time database with offline support
 - **FirebaseMessaging** - Push notifications
 - **FirebaseAnalytics** - Analytics tracking
 

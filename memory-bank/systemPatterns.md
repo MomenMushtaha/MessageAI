@@ -5,7 +5,7 @@
 - Service layer singletons (e.g., `AuthService.shared`, `ChatService.shared`) expose `@Published` state on `@MainActor`
 - **Realtime Database observers** for conversations/messages with debounced UI updates
 - Local persistence via SwiftData (`LocalMessage`, `LocalConversation`) through `LocalStorageService`
-- Firebase Storage for media; Cloud Functions in `functions/` for push notifications
+- AWS S3 + CloudFront for media; Cloud Functions in `functions/` for push notifications
 - **Realtime Database structure**: flat paths like `users/{userId}`, `conversations/{convId}/messages/{msgId}`
 
 ### Design patterns
@@ -20,7 +20,7 @@
 - Privacy-aware reads: conditional read receipts based on user settings
 
 ### Component relationships
-- Views → Services (Auth/Chat/Presence/Notification/Media) → Firebase (Auth/Firestore/Storage)
+- Views → Services (Auth/Chat/Presence/Notification/Media) → Firebase (Auth/Database/Messaging/Analytics) + S3 uploads for media
 - `NotificationService` for in-app banners; `PushNotificationService` for badges/FCM
 - `PresenceService` manages heartbeats and last seen timestamps
 
@@ -35,5 +35,4 @@
 - Integration tests under `MessageAITests/`
 - Offline-first: writes queued locally, listeners reconcile state when online
 - Rollbacks: local optimistic updates revert on server failure
-
 

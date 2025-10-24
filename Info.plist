@@ -58,5 +58,7 @@
 	<string>MessageAI needs access to your photo library to select photos and videos to share with your contacts.</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>
 	<string>MessageAI needs permission to save photos and videos to your photo library.</string>
+	<key>S3_UPLOAD_ENDPOINT</key>
+	<string>https://us-central1-messagingai-swift.cloudfunctions.net/generateUploadUrl</string>
 </dict>
 </plist>

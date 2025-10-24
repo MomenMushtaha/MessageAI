@@ -168,19 +168,19 @@ All features that were temporarily removed during the Firestore → Realtime Dat
 **Status:** ✅ Complete
 
 #### Image Messages
-- Upload to Firebase Storage
+- Upload to AWS S3 (served via CloudFront)
 - Generate thumbnails
 - Show in conversation
 - Track upload progress
 
 #### Video Messages
-- Upload to Firebase Storage
+- Upload to AWS S3 (served via CloudFront)
 - Generate thumbnails
 - Show duration
 - Track upload progress
 
 #### Voice Messages
-- Upload audio to Firebase Storage
+- Upload audio to AWS S3 (served via CloudFront)
 - Show duration
 - Waveform icon
 
@@ -188,7 +188,7 @@ All features that were temporarily removed during the Firestore → Realtime Dat
 - `sendImageMessage(conversationId:senderId:image:progressHandler:)`
 - `sendVideoMessage(conversationId:senderId:videoURL:progressHandler:)`
 - `sendVoiceMessage(conversationId:senderId:audioData:duration:progressHandler:)`
-- Uses MediaService for Storage uploads
+- Uses MediaService for S3 uploads
 - Stores URLs and metadata in Realtime Database
 
 **UI:**
@@ -388,4 +388,3 @@ All core and advanced features have been successfully implemented for Firebase R
 - Memory Bank files updated with current status
 
 **Build and run:** `⌘B` then `⌘R` in Xcode!
-

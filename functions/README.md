@@ -22,12 +22,18 @@ Sends push notifications to all participants when a new message is created.
 
 Removes FCM tokens older than 90 days to keep the database clean.
 
+### 3. generateUploadUrl
+**Trigger:** HTTPS callable (`POST`)
+
+Generates short-lived pre-signed S3 upload URLs (one per requested file) and returns public CDN URLs (CloudFront if configured, otherwise S3).
+
 ## Setup
 
 ### Prerequisites
 - Node.js 18 or higher
 - Firebase CLI installed globally: `npm install -g firebase-tools`
 - Firebase project initialized
+- AWS IAM user/role with permissions to `s3:PutObject` on your media bucket
 
 ### Installation
 
@@ -52,6 +58,23 @@ Select:
 - JavaScript
 - Use ESLint: No
 - Install dependencies: Yes
+
+### AWS Credentials
+
+The `generateUploadUrl` function requires AWS credentials with rights to issue `PutObject` operations on your media bucket.
+
+1. Configure Firebase function config:
+   ```bash
+firebase functions:config:set \
+  aws.bucket="your-bucket-name" \
+  aws.region="your-region" \
+  aws.cloudfront_domain="d123.cloudfront.net" \
+  aws.access_key_id="YOUR_AWS_ACCESS_KEY_ID" \
+  aws.secret_access_key="YOUR_AWS_SECRET_ACCESS_KEY"
+```
+If you are not using CloudFront, omit `aws.cloudfront_domain`.
+
+2. (Optional) Instead of config variables, you can set environment variables `S3_BUCKET`, `AWS_REGION`, and `CLOUDFRONT_DOMAIN` before deploying or running the emulator.
 
 ## Development
 
@@ -78,6 +101,7 @@ npm run deploy
 ```bash
 firebase deploy --only functions:sendMessageNotification
 firebase deploy --only functions:cleanupOldTokens
+firebase deploy --only functions:generateUploadUrl
 ```
 
 ## Monitoring
