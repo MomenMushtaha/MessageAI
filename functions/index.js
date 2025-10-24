@@ -1,7 +1,10 @@
 /**
  * Cloud Functions for MessageAI
  *
- * Handles push notifications when new messages are created
+ * Handles:
+ * - Push notifications when new messages are created
+ * - AI/RAG features (automatic embeddings, summarization)
+ * - Media upload URL generation (S3/CloudFront)
  */
 
 const functions = require('firebase-functions');
@@ -10,6 +13,14 @@ const { S3Client, PutObjectCommand } = require('@aws-sdk/client-s3');
 const { getSignedUrl } = require('@aws-sdk/s3-request-presigner');
 
 admin.initializeApp();
+
+// AI/RAG function imports
+const { onMessageCreate: embedNewMessage } = require('./src/triggers/rtdbOnWrite');
+const { summarize: aiSummarize } = require('./src/http/summarize');
+
+// Export AI functions
+exports.embedNewMessage = embedNewMessage;
+exports.aiSummarize = aiSummarize;
 
 /**
  * Send push notification when a new message is created
