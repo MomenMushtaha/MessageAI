@@ -45,35 +45,35 @@ struct InferenceSettingsView: View {
             }
 
             Section {
-                FeatureRow(
+                InferenceFeatureRow(
                     icon: "sparkles",
                     title: "Summarization",
                     description: "Full-context thread summaries",
                     provider: getProvider(for: .summarize)
                 )
 
-                FeatureRow(
+                InferenceFeatureRow(
                     icon: "mic.fill",
                     title: "Voice Transcription",
                     description: "Convert voice notes to text",
                     provider: getProvider(for: .voiceTranscription)
                 )
 
-                FeatureRow(
+                InferenceFeatureRow(
                     icon: "magnifyingglass",
                     title: "Semantic Search",
                     description: "AI-powered message search",
                     provider: getProvider(for: .search)
                 )
 
-                FeatureRow(
+                InferenceFeatureRow(
                     icon: "text.bubble",
                     title: "Language Detection",
                     description: "Automatic language identification",
                     provider: getProvider(for: .languageDetection)
                 )
 
-                FeatureRow(
+                InferenceFeatureRow(
                     icon: "shield.checkered",
                     title: "Content Safety",
                     description: "On-device toxicity filtering",
@@ -157,7 +157,7 @@ struct InferenceSettingsView: View {
     }
 }
 
-struct FeatureRow: View {
+struct InferenceFeatureRow: View {
     let icon: String
     let title: String
     let description: String
