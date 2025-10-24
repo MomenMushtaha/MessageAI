@@ -30,6 +30,16 @@
 - `LocalStorageService` – SwiftData-backed offline cache
 - `CacheManager`, `RateLimiter`, `PerformanceMonitor`, `ErrorRecoveryService`
 
+### AI/RAG Stack (Implementation Rule: `.claude/rules/ai-rag-implementation.md`)
+- **Vector DB**: Pinecone (with Qdrant as alternative)
+- **Embeddings**: OpenAI `text-embedding-3-small`
+- **LLM**: OpenAI GPT-4o-mini (swappable with Claude via Bedrock/OpenRouter)
+- **Features**:
+  - Automatic message embedding via RTDB trigger (chunk → embed → upsert)
+  - AI-powered conversation summarization with RAG
+  - Hybrid retrieval (vector search + recent RTDB window)
+  - Auth-gated HTTPS endpoints
+
 ### Database Migration Notes
 - **Migrated from Firestore to Realtime Database**
 - Key API changes:

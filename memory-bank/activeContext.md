@@ -38,9 +38,13 @@ Date: 2025-10-24
   - Status indicators
 
 ### Next steps
+- **READY FOR AI/RAG**: Implement AI features using Pinecone + OpenAI embeddings
+  - Automatic message embedding (chunk → embed → upsert to Pinecone)
+  - AI-powered conversation summarization with RAG
+  - Hybrid retrieval (vector search + recent RTDB window)
+  - Future: Action items, decisions, priority extraction
 - Test the migrated app to ensure Realtime Database integration works
 - Update security rules for Realtime Database (currently using Firestore rules)
-- Consider data migration strategy if existing Firestore data needs to be preserved
 
 ### Active decisions
 - Use optimistic UI, debounced listeners, and batch writes as standard
