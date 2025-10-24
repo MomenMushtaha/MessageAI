@@ -40,17 +40,34 @@ class ChatService: ObservableObject {
     
     func fetchAllUsers(excludingUserId: String) async {
         do {
-            print("👥 Fetching all users...")
+            print("👥 Fetching all users (excluding: \(excludingUserId))...")
             let snapshot = try await db.child("users").getData()
-            
-            guard let usersDict = snapshot.value as? [String: [String: Any]] else {
-                print("⚠️ No users found")
+
+            print("📊 Snapshot exists: \(snapshot.exists())")
+
+            guard snapshot.exists() else {
+                print("⚠️ /users node does not exist in Firebase RTDB")
+                allUsers = []
                 return
             }
-            
+
+            guard let usersDict = snapshot.value as? [String: [String: Any]] else {
+                print("⚠️ Could not parse users data as [String: [String: Any]]")
+                print("⚠️ Actual type: \(type(of: snapshot.value))")
+                allUsers = []
+                return
+            }
+
+            print("📊 Found \(usersDict.count) total users in database")
+
             allUsers = usersDict.compactMap { (userId, data) -> User? in
-                guard userId != excludingUserId else { return nil }
-                
+                guard userId != excludingUserId else {
+                    print("⏭️ Skipping current user: \(userId)")
+                    return nil
+                }
+
+                print("✅ Adding user: \(userId) - \(data["displayName"] as? String ?? "Unknown")")
+
                 return User(
                     id: data["id"] as? String ?? userId,
                     displayName: data["displayName"] as? String ?? "Unknown",
@@ -66,13 +83,14 @@ class ChatService: ObservableObject {
                     }()
                 )
             }
-            
+
             // Cache all users for faster subsequent access
             CacheManager.shared.cacheUsers(allUsers)
-            
-            print("✅ Fetched \(allUsers.count) users")
+
+            print("✅ Fetched \(allUsers.count) users (excluding current user)")
         } catch {
             print("❌ Error fetching users: \(error.localizedDescription)")
+            allUsers = []
         }
     }
     
