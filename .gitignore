@@ -42,6 +42,11 @@ fastlane/test_output
 *.dSYM.zip
 *.dSYM
 
+# Backup files
+*.old
+*.backup
+*~
+
 # macOS Specific
 .DocumentRevisions-V100
 .fseventsd
