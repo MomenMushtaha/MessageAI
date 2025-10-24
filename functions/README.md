@@ -5,7 +5,7 @@ Firebase Cloud Functions for MessageAI push notifications and background tasks.
 ## Functions
 
 ### 1. sendMessageNotification
-**Trigger:** Firestore onCreate - `conversations/{conversationId}/messages/{messageId}`
+**Trigger:** Realtime Database onCreate - `conversations/{conversationId}/messages/{messageId}`
 
 Sends push notifications to all participants when a new message is created.
 

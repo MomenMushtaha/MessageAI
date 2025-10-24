@@ -30,11 +30,11 @@ All 10 steps of the incremental MVP plan have been successfully implemented and 
 - 🎯 **Empty states** - Helpful guidance for new users
 
 ### Performance & Optimization
-- ⚡ **NSCache** - Smart caching reduces Firestore reads by ~70%
+- ⚡ **NSCache** - Smart caching reduces Realtime Database reads by ~70%
 - 🚀 **Lazy Loading** - Messages paginated (100 at a time) for instant load
 - 📉 **Smart Updates** - UI only re-renders when data actually changes
 - 💾 **Memory Efficient** - 15MB cache limit, auto-cleanup on logout
-- 🎯 **Optimized Queries** - Firestore queries limited and properly indexed
+- 🎯 **Optimized Queries** - Realtime Database queries limited and properly indexed
 - 🏃‍♂️ **60fps Scrolling** - LazyVStack with Equatable components
 - ⏱️ **<200ms Latency** - Optimistic UI for instant message feedback
 
@@ -78,9 +78,9 @@ Before running the app, you need to configure Firebase:
 
 3. **Enable Firebase Services**
    - Enable **Authentication** → Email/Password provider
-   - Enable **Firestore Database** → Start in test mode (update security rules later)
+   - Enable **Realtime Database** → Start in test mode (update security rules later)
    - Enable **Cloud Messaging** for push notifications
-   - (Optional) Enable **Cloud Functions** for advanced features
+   - Enable **Cloud Functions** for media upload URL generation
 
 4. **Configure APNs (for Push Notifications)**
    - Generate APNs key in Apple Developer Console

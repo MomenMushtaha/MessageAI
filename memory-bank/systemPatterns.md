@@ -9,10 +9,10 @@
 - **Realtime Database structure**: flat paths like `users/{userId}`, `conversations/{convId}/messages/{msgId}`
 
 ### Design patterns
-- Optimistic UI: create local message immediately, then confirm/rollback after Firestore write
-- Batching: Firestore `batch` updates for message + conversation metadata
+- Optimistic UI: create local message immediately, then confirm/rollback after Realtime Database write
+- Batching: Realtime Database `updateChildValues()` for message + conversation metadata
 - Debounce: small `Task.sleep` delays to coalesce rapid snapshot updates
-- Pagination: `limit(toLast:)` + manual older-load with `start(after:)`
+- Pagination: `queryLimited(toLast:)` + manual older-load for message history
 - Caching: `CacheManager` for users and message lists; NSCache with limits
 - Error recovery: `ErrorRecoveryService` with exponential backoff and rollback hooks
 - Rate limiting: `RateLimiter` gating send frequency
