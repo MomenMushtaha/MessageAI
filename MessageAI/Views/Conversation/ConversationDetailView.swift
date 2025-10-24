@@ -16,14 +16,14 @@ struct ConversationDetailView: View {
     @EnvironmentObject var authService: AuthService
     @EnvironmentObject var chatService: ChatService
     @StateObject private var audioService = AudioService.shared
-    @StateObject private var aiService = AIService.shared
+    @StateObject private var inferenceManager = InferenceManager.shared
 
     // Message input
     @State private var messageText = ""
     @State private var isSending = false
 
-    // AI features (Phase B)
-    @State private var aiSummary: AISummaryResponse?
+    // AI features (Hybrid: Server + CoreML)
+    @State private var aiSummary: InferenceSummaryResult?
     @State private var aiActions: [AIAction] = []
     @State private var isLoadingAI = false
     @State private var aiError: String?
@@ -126,12 +126,14 @@ struct ConversationDetailView: View {
                 typingIndicatorView
             }
 
-            // AI Result Card (Phase B)
+            // AI Result Card (Hybrid Inference)
             if let summary = aiSummary {
                 AIResultCard(
                     title: "AI Summary",
                     content: summary.summary,
-                    sources: summary.sources
+                    sources: summary.sources,
+                    onDevice: summary.onDevice,
+                    model: summary.model
                 )
             }
 
@@ -784,10 +786,16 @@ struct ConversationDetailView: View {
 
         do {
             print("🤖 Calling AI summarize for conversation: \(conversation.id)")
-            let summary = try await aiService.summarize(convId: conversation.id, window: "week", style: "bullets")
+            let summary = try await inferenceManager.summarize(
+                convId: conversation.id,
+                messages: currentMessages,
+                window: "week",
+                style: "bullets"
+            )
             await MainActor.run {
                 aiSummary = summary
                 aiError = nil
+                print("✅ Summary generated: \(summary.onDevice ? "On-Device" : "Server") (\(summary.model))")
             }
         } catch {
             print("❌ AI summarize error: \(error.localizedDescription)")
@@ -805,10 +813,14 @@ struct ConversationDetailView: View {
 
         do {
             print("🤖 Extracting action items for conversation: \(conversation.id)")
-            let response = try await aiService.actionItems(convId: conversation.id)
+            let actions = try await inferenceManager.extractActions(
+                convId: conversation.id,
+                messages: currentMessages
+            )
             await MainActor.run {
-                aiActions = response.actions
+                aiActions = actions
                 aiError = nil
+                print("✅ Extracted \(actions.count) action items")
             }
         } catch {
             print("❌ AI action items error: \(error.localizedDescription)")

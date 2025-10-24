@@ -11,6 +11,8 @@ struct AIResultCard: View {
     let title: String
     let content: String
     let sources: [String]
+    var onDevice: Bool = false
+    var model: String? = nil
     @State private var isExpanded = true
 
     var body: some View {
@@ -25,6 +27,35 @@ struct AIResultCard: View {
 
                 Spacer()
 
+                // Processing source badge
+                if onDevice {
+                    HStack(spacing: 4) {
+                        Image(systemName: "iphone")
+                            .font(.caption2)
+                        Text("Device")
+                            .font(.caption2)
+                            .fontWeight(.medium)
+                    }
+                    .foregroundStyle(.green)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(Color.green.opacity(0.1))
+                    .cornerRadius(6)
+                } else {
+                    HStack(spacing: 4) {
+                        Image(systemName: "cloud.fill")
+                            .font(.caption2)
+                        Text("Server")
+                            .font(.caption2)
+                            .fontWeight(.medium)
+                    }
+                    .foregroundStyle(.blue)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(Color.blue.opacity(0.1))
+                    .cornerRadius(6)
+                }
+
                 Button(action: { withAnimation { isExpanded.toggle() } }) {
                     Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
                         .foregroundStyle(.secondary)
@@ -32,6 +63,14 @@ struct AIResultCard: View {
             }
 
             if isExpanded {
+                // Model info
+                if let model = model {
+                    Text("Model: \(model)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .padding(.bottom, 4)
+                }
+
                 // Content
                 Text(content)
                     .font(.body)
