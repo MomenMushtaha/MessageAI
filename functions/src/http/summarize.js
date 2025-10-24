@@ -13,8 +13,38 @@ const { embedText } = require("../ai/embeddings");
 if (!admin.apps.length) admin.initializeApp();
 
 const db = admin.database();
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-const store = pineconeVectorStore();
+let openai = null;
+let store = null;
+
+/**
+ * Get or create OpenAI client instance
+ * @returns {OpenAI} OpenAI client
+ */
+function getOpenAIClient() {
+  if (!openai) {
+    const apiKey = process.env.OPENAI_API_KEY || functions.config().openai?.api_key;
+    if (!apiKey) {
+      throw new Error(
+        "OPENAI_API_KEY not configured. " +
+        "Set via: firebase functions:config:set openai.api_key=\"sk-...\""
+      );
+    }
+    console.log("✅ OpenAI API key found:", apiKey.substring(0, 10) + "...");
+    openai = new OpenAI({ apiKey });
+  }
+  return openai;
+}
+
+/**
+ * Get or create Pinecone vector store instance
+ * @returns {Object} Vector store
+ */
+function getVectorStore() {
+  if (!store) {
+    store = pineconeVectorStore();
+  }
+  return store;
+}
 
 /**
  * Require Firebase authentication
@@ -58,7 +88,7 @@ async function retrieveContext(params) {
   // 1) Vector search (if we have a query)
   const queryVec = queryText ? (await embedText([queryText]))[0] : undefined;
   const vectorHits = queryVec
-    ? await store.querySimilar({ convId, queryEmbedding: queryVec, topK, sinceTs })
+    ? await getVectorStore().querySimilar({ convId, queryEmbedding: queryVec, topK, sinceTs })
     : [];
 
   console.log(`🔍 Vector search found ${vectorHits.length} results`);
@@ -191,7 +221,7 @@ exports.summarize = functions.https.onRequest(async (req, res) => {
     console.log(`🤖 Calling OpenAI GPT-4o-mini...`);
 
     // Call OpenAI
-    const resp = await openai.chat.completions.create({
+    const resp = await getOpenAIClient().chat.completions.create({
       model: "gpt-4o-mini",
       messages: [
         { role: "system", content: sys },
