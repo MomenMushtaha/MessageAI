@@ -183,7 +183,8 @@ class CoreMLInferenceProvider: InferenceProvider {
             throw InferenceError.processingFailed("Failed to generate embedding")
         }
 
-        return vector
+        // Convert [Double] to [Float]
+        return vector.map { Float($0) }
     }
 
     // MARK: - Private Helpers
