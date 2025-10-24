@@ -39,6 +39,11 @@ struct ConversationDetailView: View {
     @State private var translatedText: String?
     @State private var targetLanguage = "en"
     @State private var showTranslationSettings = false
+    
+    // Text Selection Summarization
+    @State private var showTextSummarySheet = false
+    @State private var selectedTextToSummarize: String?
+    @State private var textSummaryResult: String?
 
     // UI state
     @State private var showErrorAlert = false
@@ -110,8 +115,13 @@ struct ConversationDetailView: View {
                                         message: message,
                                         isFromCurrentUser: message.senderId == authService.currentUser?.id,
                                         conversation: conversation,
-                                                currentUserId: authService.currentUser?.id ?? ""
-                                            )
+                                        currentUserId: authService.currentUser?.id ?? "",
+                                        onSummarizeText: { selectedText in
+                                            selectedTextToSummarize = selectedText
+                                            textSummaryResult = nil
+                                            showTextSummarySheet = true
+                                        }
+                                    )
                                 .id(message.id)
                                 .contextMenu {
                                     messageContextMenu(for: message)
@@ -233,6 +243,9 @@ struct ConversationDetailView: View {
         }
         .sheet(isPresented: $showVoiceRecording) {
             voiceRecordingSheet
+        }
+        .sheet(isPresented: $showTextSummarySheet) {
+            textSummarySheet
         }
         .confirmationDialog("Delete Message", isPresented: $showDeleteConfirmation, presenting: selectedMessage) { message in
             Button("Delete for Me", role: .destructive) {
@@ -548,6 +561,97 @@ struct ConversationDetailView: View {
                     Button("Close") {
                         showTranslateSheet = false
                         translatedText = nil
+                    }
+                }
+            }
+        }
+        .presentationDetents([.large])
+    }
+    
+    private var textSummarySheet: some View {
+        NavigationStack {
+            VStack(spacing: 20) {
+                if let selectedText = selectedTextToSummarize {
+                    // Original selected text
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Selected Text")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        
+                        ScrollView {
+                            Text(selectedText)
+                                .font(.body)
+                                .padding()
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .background(Color(.systemGray6))
+                                .cornerRadius(8)
+                                .textSelection(.enabled)
+                        }
+                        .frame(maxHeight: 150)
+                    }
+                    
+                    // Summarize button
+                    Button {
+                        Task { await summarizeSelectedText(selectedText) }
+                    } label: {
+                        HStack {
+                            if isLoadingAI {
+                                ProgressView()
+                                    .padding(.trailing, 8)
+                            }
+                            Image(systemName: "sparkles")
+                            Text(isLoadingAI ? "Summarizing..." : "Summarize")
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding()
+                        .background(Color.blue)
+                        .foregroundStyle(.white)
+                        .cornerRadius(10)
+                    }
+                    .disabled(isLoadingAI)
+                    
+                    #if canImport(FoundationModels)
+                    if #available(iOS 26.0, *) {
+                        FoundationModelsStatusView()
+                    }
+                    #endif
+                    
+                    // Summary result
+                    if let summary = textSummaryResult {
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack {
+                                Image(systemName: "sparkles")
+                                    .foregroundStyle(.blue)
+                                Text("Summary")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            
+                            ScrollView {
+                                Text(summary)
+                                    .font(.body)
+                                    .padding()
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .background(Color.blue.opacity(0.1))
+                                    .cornerRadius(8)
+                                    .textSelection(.enabled)
+                            }
+                            .frame(maxHeight: 300)
+                        }
+                    }
+                    
+                    Spacer()
+                }
+            }
+            .padding()
+            .navigationTitle("Summarize Text")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Close") {
+                        showTextSummarySheet = false
+                        textSummaryResult = nil
+                        selectedTextToSummarize = nil
                     }
                 }
             }
@@ -985,6 +1089,59 @@ struct ConversationDetailView: View {
         }
     }
 
+    private func summarizeSelectedText(_ text: String) async {
+        isLoadingAI = true
+        defer { isLoadingAI = false }
+        
+        do {
+            print("✨ Summarizing selected text (\(text.count) characters)...")
+            
+            // Try using Foundation Models for on-device summarization first
+            #if canImport(FoundationModels)
+            if #available(iOS 26.0, *) {
+                if let onDeviceSummary = try await summarizeWithFoundationModels(text: text) {
+                    await MainActor.run {
+                        textSummaryResult = onDeviceSummary
+                        aiError = nil
+                        print("✅ Summarization completed using Foundation Models")
+                    }
+                    return
+                }
+            }
+            #endif
+            
+            // Fallback: Use the server-based summarization
+            // Create a temporary message for the inference manager
+            let tempMessage = Message(
+                id: UUID().uuidString,
+                conversationId: conversation.id,
+                senderId: "temp",
+                text: text,
+                createdAt: Date()
+            )
+            
+            let result = try await inferenceManager.summarize(
+                convId: conversation.id,
+                messages: [tempMessage],
+                window: "all",
+                style: "paragraph"
+            )
+            
+            await MainActor.run {
+                textSummaryResult = result.summary
+                aiError = nil
+                print("✅ Summarization completed using \(result.model)")
+            }
+        } catch {
+            print("❌ Summarization error: \(error.localizedDescription)")
+            await MainActor.run {
+                aiError = error.localizedDescription
+                errorMessage = "Summarization failed: \(error.localizedDescription)"
+                showErrorAlert = true
+            }
+        }
+    }
+    
     private func translateMessage(message: Message, targetLang: String) async {
         isLoadingAI = true
         defer { isLoadingAI = false }
@@ -1086,9 +1243,42 @@ struct ConversationDetailView: View {
         return cleanText.isEmpty ? "Translation service is ready. Configure an OpenAI API key for actual translations." : cleanText
     }
     
-    // MARK: - Foundation Models Translation
+    // MARK: - Foundation Models AI Functions
     
     #if canImport(FoundationModels)
+    @available(iOS 26.0, *)
+    private func summarizeWithFoundationModels(text: String) async throws -> String? {
+        // Check if Foundation Models is available
+        let model = SystemLanguageModel.default
+        
+        guard case .available = model.availability else {
+            print("ℹ️ Foundation Models not available, falling back to external service")
+            return nil
+        }
+        
+        // Create a summarization session
+        let instructions = """
+        You are a professional text summarizer. Summarize the given text concisely while preserving key information.
+        Provide only the summary without any explanations or additional context.
+        Keep the summary clear, accurate, and well-structured.
+        """
+        
+        let session = LanguageModelSession(instructions: instructions)
+        
+        // Create the summarization prompt
+        let prompt = "Summarize the following text: \"\(text)\""
+        
+        do {
+            let response = try await session.respond(to: prompt)
+            let summary = response.content.trimmingCharacters(in: .whitespacesAndNewlines)
+            
+            return summary.isEmpty ? nil : summary
+        } catch {
+            print("❌ Foundation Models summarization failed: \(error)")
+            return nil
+        }
+    }
+    
     @available(iOS 26.0, *)
     private func translateWithFoundationModels(text: String, targetLang: String) async throws -> String? {
         // Check if Foundation Models is available
@@ -1161,6 +1351,7 @@ struct MessageBubbleRow: View {
     let isFromCurrentUser: Bool
     let conversation: Conversation
     let currentUserId: String
+    let onSummarizeText: (String) -> Void
     
     var body: some View {
         VStack(alignment: isFromCurrentUser ? .trailing : .leading, spacing: 4) {
@@ -1194,9 +1385,11 @@ struct MessageBubbleRow: View {
             
             // Text content
             if !message.text.isEmpty {
-                        Text(message.text)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 8)
+                SelectableMessageText(
+                    text: message.text,
+                    isFromCurrentUser: isFromCurrentUser,
+                    onSummarize: onSummarizeText
+                )
             }
             
             // Metadata
