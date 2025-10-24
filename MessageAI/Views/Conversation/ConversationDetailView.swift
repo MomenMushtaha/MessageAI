@@ -16,10 +16,17 @@ struct ConversationDetailView: View {
     @EnvironmentObject var authService: AuthService
     @EnvironmentObject var chatService: ChatService
     @StateObject private var audioService = AudioService.shared
+    @StateObject private var aiService = AIService.shared
 
     // Message input
     @State private var messageText = ""
     @State private var isSending = false
+
+    // AI features (Phase B)
+    @State private var aiSummary: AISummaryResponse?
+    @State private var aiActions: [AIAction] = []
+    @State private var isLoadingAI = false
+    @State private var aiError: String?
 
     // UI state
     @State private var showErrorAlert = false
@@ -119,8 +126,51 @@ struct ConversationDetailView: View {
                 typingIndicatorView
             }
 
+            // AI Result Card (Phase B)
+            if let summary = aiSummary {
+                AIResultCard(
+                    title: "AI Summary",
+                    content: summary.summary,
+                    sources: summary.sources
+                )
+            }
+
+            // AI Actions List (Phase B)
+            if !aiActions.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(aiActions) { action in
+                            actionItemCard(action)
+                        }
+                    }
+                    .padding(.horizontal)
+                }
+                .frame(height: 100)
+            }
+
+            // AI Bottom Bar (Phase B)
+            AIBottomBar(
+                onSummarize: { Task { await summarizeTap() } },
+                onActions: { Task { await actionsTap() } },
+                onDecisions: { showTemporaryMessage("Decisions coming soon") },
+                onSearch: { showTemporaryMessage("Search coming soon") },
+                onTranslate: { showTemporaryMessage("Translate coming soon") }
+            )
+
             // Message Input
             messageInputView
+        }
+        .overlay {
+            if isLoadingAI {
+                ZStack {
+                    Color.black.opacity(0.2)
+                    ProgressView()
+                        .controlSize(.large)
+                        .padding()
+                        .background(Color(.systemBackground))
+                        .cornerRadius(12)
+                }
+            }
         }
         .navigationTitle(navigationTitle)
         .navigationBarTitleDisplayMode(.inline)
@@ -911,6 +961,71 @@ struct MessageBubbleRow: View {
         let minutes = Int(duration) / 60
         let seconds = Int(duration) % 60
         return String(format: "%d:%02d", minutes, seconds)
+    }
+
+    // MARK: - AI Actions (Phase B)
+
+    private func summarizeTap() async {
+        isLoadingAI = true
+        defer { isLoadingAI = false }
+
+        do {
+            print("🤖 Calling AI summarize for conversation: \(conversation.id)")
+            let summary = try await aiService.summarize(convId: conversation.id, window: "week", style: "bullets")
+            await MainActor.run {
+                aiSummary = summary
+                aiError = nil
+            }
+        } catch {
+            print("❌ AI summarize error: \(error.localizedDescription)")
+            await MainActor.run {
+                aiError = error.localizedDescription
+                showError(error.localizedDescription)
+            }
+        }
+    }
+
+    private func actionsTap() async {
+        isLoadingAI = true
+        defer { isLoadingAI = false }
+
+        do {
+            print("🤖 Extracting action items for conversation: \(conversation.id)")
+            let response = try await aiService.actionItems(convId: conversation.id)
+            await MainActor.run {
+                aiActions = response.actions
+                aiError = nil
+            }
+        } catch {
+            print("❌ AI action items error: \(error.localizedDescription)")
+            await MainActor.run {
+                aiError = error.localizedDescription
+                showError(error.localizedDescription)
+            }
+        }
+    }
+
+    private func actionItemCard(_ action: AIAction) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(action.title)
+                .font(.caption)
+                .fontWeight(.semibold)
+                .lineLimit(2)
+            Text("Owner: \(action.ownerId)")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+            Text("Due: \(action.due)")
+                .font(.caption2)
+                .foregroundStyle(.blue)
+        }
+        .padding(8)
+        .frame(width: 150)
+        .background(Color(.systemGray6))
+        .cornerRadius(8)
+    }
+
+    private func showTemporaryMessage(_ message: String) {
+        showError(message)
     }
 }
 

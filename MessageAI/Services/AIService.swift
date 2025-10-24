@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import FirebaseAuth
 import FirebaseDatabase
 import Combine
 
@@ -37,9 +38,115 @@ class AIService: ObservableObject {
         }
     }
     
+    // MARK: - Cloud Functions Integration (Phase A)
+
+    private let baseURL = URL(string: "https://us-central1-messagingai-swift.cloudfunctions.net")!
+
+    /// Helper: Make authenticated request to Cloud Functions
+    private func authedRequest(_ path: String, body: [String: Any]) async throws -> Data {
+        guard let user = Auth.auth().currentUser else {
+            throw AIError.configurationError("User not authenticated")
+        }
+
+        let token = try await user.getIDToken()
+
+        var request = URLRequest(url: baseURL.appendingPathComponent(path))
+        request.httpMethod = "POST"
+        request.addValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+
+        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+            let errorMsg = String(data: data, encoding: .utf8) ?? "Unknown error"
+            throw AIError.apiError("Server error: \(errorMsg)")
+        }
+
+        return data
+    }
+
+    /// Summarize conversation using RAG (Pinecone + Cloud Functions)
+    func summarize(convId: String, window: String = "week", style: String = "bullets") async throws -> AISummaryResponse {
+        print("🤖 Summarizing conversation: \(convId)")
+        isProcessing = true
+        defer { isProcessing = false }
+
+        let data = try await authedRequest("/aiSummarize", body: [
+            "convId": convId,
+            "window": window,
+            "style": style
+        ])
+
+        let response = try JSONDecoder().decode(AISummaryResponse.self, from: data)
+        print("✅ Summary received with \(response.sources.count) sources")
+        return response
+    }
+
+    /// Extract action items (future endpoint)
+    func actionItems(convId: String) async throws -> AIActionItemsResponse {
+        print("🤖 Extracting action items: \(convId)")
+        isProcessing = true
+        defer { isProcessing = false }
+
+        let data = try await authedRequest("/action_items", body: ["convId": convId])
+        return try JSONDecoder().decode(AIActionItemsResponse.self, from: data)
+    }
+
+    /// Semantic search (future endpoint)
+    func search(convId: String, q: String, topK: Int = 8) async throws -> AISearchResponse {
+        print("🤖 Semantic search: '\(q)'")
+        isProcessing = true
+        defer { isProcessing = false }
+
+        let data = try await authedRequest("/search", body: [
+            "convId": convId,
+            "q": q,
+            "topK": topK
+        ])
+        return try JSONDecoder().decode(AISearchResponse.self, from: data)
+    }
+
+    /// Detect message priority (future endpoint)
+    func priority(convId: String, msgId: String) async throws -> AIPriorityResponse {
+        print("🤖 Detecting priority for message: \(msgId)")
+        isProcessing = true
+        defer { isProcessing = false }
+
+        let data = try await authedRequest("/priority", body: [
+            "convId": convId,
+            "msgId": msgId
+        ])
+        return try JSONDecoder().decode(AIPriorityResponse.self, from: data)
+    }
+
+    /// Track decisions (future endpoint)
+    func decisions(convId: String) async throws -> AIDecisionsResponse {
+        print("🤖 Tracking decisions: \(convId)")
+        isProcessing = true
+        defer { isProcessing = false }
+
+        let data = try await authedRequest("/decisions", body: ["convId": convId])
+        return try JSONDecoder().decode(AIDecisionsResponse.self, from: data)
+    }
+
+    /// Translate message (future endpoint)
+    func translate(convId: String, msgId: String, targetLang: String) async throws -> AITranslateResponse {
+        print("🤖 Translating message: \(msgId) to \(targetLang)")
+        isProcessing = true
+        defer { isProcessing = false }
+
+        let data = try await authedRequest("/translate", body: [
+            "convId": convId,
+            "msgId": msgId,
+            "targetLang": targetLang
+        ])
+        return try JSONDecoder().decode(AITranslateResponse.self, from: data)
+    }
+
     // MARK: - 1. Thread Summarization
-    
-    /// Summarizes a conversation thread with key points
+
+    /// Summarizes a conversation thread with key points (Legacy - direct OpenAI call)
     func summarizeConversation(messages: [Message], conversationId: String) async throws -> ConversationSummary {
         print("🤖 Summarizing conversation with \(messages.count) messages...")
         
@@ -592,7 +699,64 @@ class AIService: ObservableObject {
     }
 }
 
-// MARK: - Models
+// MARK: - Models (Phase A)
+
+// Response from Cloud Functions /aiSummarize
+struct AISummaryResponse: Decodable {
+    let summary: String
+    let sources: [String] // Message IDs
+}
+
+struct AIAction: Codable, Identifiable {
+    var id: String { sourceMsgId }
+    let title: String
+    let ownerId: String
+    let due: String
+    let sourceMsgId: String
+}
+
+struct AIActionItemsResponse: Decodable {
+    let actions: [AIAction]
+}
+
+struct AIPriorityResponse: Decodable {
+    let priority: String
+    let reasons: [String]
+}
+
+struct AIDecision: Identifiable, Decodable {
+    let id: String
+    let decision: String
+    let rationale: String
+    let sources: [String]
+}
+
+struct AIDecisionsResponse: Decodable {
+    let decisions: [AIDecision]
+}
+
+struct AISearchHit: Identifiable, Decodable {
+    let id: String
+    let msgId: String
+    let snippet: String
+    let score: Double
+}
+
+struct AISearchResponse: Decodable {
+    let results: [AISearchHit]
+}
+
+struct AITranslateResponse: Decodable {
+    let translated: String
+    let notes: String?
+}
+
+// Legacy model (keeping for backward compatibility)
+struct CloudSummary: Codable {
+    let summary: String
+    let sources: [String] // Message IDs
+    let createdAt: Date
+}
 
 struct ConversationSummary: Codable {
     let mainTopics: [String]
