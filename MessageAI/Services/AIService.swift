@@ -444,9 +444,9 @@ class AIService: ObservableObject {
         )
     }
     
-    // MARK: - Private Helper Methods
-    
-    private func callOpenAI(prompt: String, maxTokens: Int = 1000) async throws -> String {
+    // MARK: - Helper Methods
+
+    func callOpenAI(prompt: String, maxTokens: Int = 1000) async throws -> String {
         // Check if API key is configured
         guard openAIAPIKey != "YOUR_OPENAI_API_KEY" else {
             // For demo/testing, return mock response

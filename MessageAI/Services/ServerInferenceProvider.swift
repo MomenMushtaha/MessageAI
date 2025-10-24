@@ -62,8 +62,22 @@ class ServerInferenceProvider: InferenceProvider {
     }
 
     func translate(text: String, targetLang: String) async throws -> String {
-        // TODO: Call /translate endpoint when implemented
-        throw InferenceError.featureNotSupported
+        // Use OpenAI directly for translation
+        let aiService = AIService.shared
+
+        let prompt = """
+        Translate the following text to \(targetLang). Only return the translation, no explanations.
+
+        Text to translate:
+        \(text)
+        """
+
+        do {
+            let result = try await aiService.callOpenAI(prompt: prompt, maxTokens: 500)
+            return result.trimmingCharacters(in: .whitespacesAndNewlines)
+        } catch {
+            throw InferenceError.processingFailed("Translation failed: \(error.localizedDescription)")
+        }
     }
 
     // MARK: - On-Device (Not Supported)

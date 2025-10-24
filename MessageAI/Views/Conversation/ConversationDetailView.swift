@@ -28,6 +28,12 @@ struct ConversationDetailView: View {
     @State private var isLoadingAI = false
     @State private var aiError: String?
 
+    // Translation
+    @State private var showTranslateSheet = false
+    @State private var selectedMessageForTranslation: Message?
+    @State private var translatedText: String?
+    @State private var targetLanguage = "English"
+
     // UI state
     @State private var showErrorAlert = false
     @State private var errorMessage = ""
@@ -156,7 +162,13 @@ struct ConversationDetailView: View {
                 onActions: { Task { await actionsTap() } },
                 onDecisions: { showTemporaryMessage("Decisions coming soon") },
                 onSearch: { showTemporaryMessage("Search coming soon") },
-                onTranslate: { showTemporaryMessage("Translate coming soon") }
+                onTranslate: {
+                    // Show translate for the most recent message
+                    if let lastMessage = currentMessages.last {
+                        selectedMessageForTranslation = lastMessage
+                        showTranslateSheet = true
+                    }
+                }
             )
 
             // Message Input
@@ -194,6 +206,9 @@ struct ConversationDetailView: View {
         }
         .sheet(isPresented: $showReactionPicker) {
             reactionPickerSheet
+        }
+        .sheet(isPresented: $showTranslateSheet) {
+            translateSheet
         }
         .sheet(isPresented: $showVoiceRecording) {
             voiceRecordingSheet
@@ -411,6 +426,89 @@ struct ConversationDetailView: View {
         )
         .presentationDetents([.height(400)])
         .presentationDragIndicator(.hidden)
+    }
+
+    private var translateSheet: some View {
+        NavigationStack {
+            VStack(spacing: 20) {
+                if let message = selectedMessageForTranslation {
+                    // Original text
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Original")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+
+                        Text(message.text)
+                            .font(.body)
+                            .padding()
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(Color(.systemGray6))
+                            .cornerRadius(8)
+                    }
+
+                    // Language selector
+                    Picker("Translate to", selection: $targetLanguage) {
+                        Text("English").tag("English")
+                        Text("Spanish").tag("Spanish")
+                        Text("French").tag("French")
+                        Text("German").tag("German")
+                        Text("Chinese").tag("Chinese")
+                        Text("Arabic").tag("Arabic")
+                    }
+                    .pickerStyle(.menu)
+
+                    // Translate button
+                    Button {
+                        Task { await translateMessage(message: message, targetLang: targetLanguage) }
+                    } label: {
+                        HStack {
+                            if isLoadingAI {
+                                ProgressView()
+                                    .padding(.trailing, 8)
+                            }
+                            Text(isLoadingAI ? "Translating..." : "Translate")
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding()
+                        .background(Color.blue)
+                        .foregroundStyle(.white)
+                        .cornerRadius(10)
+                    }
+                    .disabled(isLoadingAI)
+
+                    // Translated text
+                    if let translated = translatedText {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Translation")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+
+                            Text(translated)
+                                .font(.body)
+                                .padding()
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .background(Color.green.opacity(0.1))
+                                .cornerRadius(8)
+                                .textSelection(.enabled)
+                        }
+                    }
+
+                    Spacer()
+                }
+            }
+            .padding()
+            .navigationTitle("Translate Message")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Close") {
+                        showTranslateSheet = false
+                        translatedText = nil
+                    }
+                }
+            }
+        }
+        .presentationDetents([.large])
     }
 
     private var navigationTitle: String {
@@ -827,6 +925,28 @@ struct ConversationDetailView: View {
             await MainActor.run {
                 aiError = error.localizedDescription
                 errorMessage = "AI Actions failed: \(error.localizedDescription)"
+                showErrorAlert = true
+            }
+        }
+    }
+
+    private func translateMessage(message: Message, targetLang: String) async {
+        isLoadingAI = true
+        defer { isLoadingAI = false }
+
+        do {
+            print("🌐 Translating message to \(targetLang)...")
+            let result = try await inferenceManager.translate(text: message.text, targetLang: targetLang)
+            await MainActor.run {
+                translatedText = result
+                aiError = nil
+                print("✅ Translation completed")
+            }
+        } catch {
+            print("❌ Translation error: \(error.localizedDescription)")
+            await MainActor.run {
+                aiError = error.localizedDescription
+                errorMessage = "Translation failed: \(error.localizedDescription)"
                 showErrorAlert = true
             }
         }
