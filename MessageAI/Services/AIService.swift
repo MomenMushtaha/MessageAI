@@ -27,14 +27,20 @@ class AIService: ObservableObject {
     private var actionItemCache: [String: [ActionItem]] = [:]
     
     private init() {
-        // Load API key from environment/info.plist
-        if let apiKey = Bundle.main.object(forInfoDictionaryKey: "OPENAI_API_KEY") as? String,
+        // Load API key from multiple sources (most secure first)
+        if let apiKey = ProcessInfo.processInfo.environment["OPENAI_API_KEY"],
            !apiKey.isEmpty && apiKey != "YOUR_OPENAI_API_KEY_HERE" {
+            // Environment variable (most secure)
+            self.openAIAPIKey = apiKey
+        } else if let apiKey = Bundle.main.object(forInfoDictionaryKey: "OPENAI_API_KEY") as? String,
+           !apiKey.isEmpty && apiKey != "YOUR_OPENAI_API_KEY_HERE" {
+            // Info.plist (convenient for development)
             self.openAIAPIKey = apiKey
         } else {
             // Fallback to placeholder for demo mode
             self.openAIAPIKey = "YOUR_OPENAI_API_KEY"
             print("⚠️ OpenAI API key not configured. AI features will use mock responses.")
+            print("💡 Set OPENAI_API_KEY in Info.plist or as environment variable")
         }
     }
     
