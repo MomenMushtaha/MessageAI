@@ -10,12 +10,12 @@
 		A52EBF5F2EA85C3D008D65D8 /* FirebaseAuth in Frameworks */ = {isa = PBXBuildFile; productRef = A5FB00012EA8300000000001 /* FirebaseAuth */; };
 		A52EBF602EA85C3D008D65D8 /* FirebaseDatabase in Frameworks */ = {isa = PBXBuildFile; productRef = A5FB00022EA8300000000002 /* FirebaseDatabase */; };
 		A52EBF612EA85C3D008D65D8 /* FirebaseMessaging in Frameworks */ = {isa = PBXBuildFile; productRef = A5FB00042EA8300000000004 /* FirebaseMessaging */; };
-		A52EBF622EA85C3D008D65D8 /* FirebaseAnalytics in Frameworks */ = {isa = PBXBuildFile; productRef = A5FB00052EA8300000000005 /* FirebaseAnalytics */; };
+		A56D3F902EAC16F100C786CC /* FirebaseAnalytics in Frameworks */ = {isa = PBXBuildFile; productRef = A56D3F8F2EAC16F100C786CC /* FirebaseAnalytics */; };
 		A5B11FA02EA82D640048396F /* README.md in Resources */ = {isa = PBXBuildFile; fileRef = A5B11F9F2EA82D640048396F /* README.md */; };
 		A5B11FA22EA82D6B0048396F /* .gitignore in Resources */ = {isa = PBXBuildFile; fileRef = A5B11FA12EA82D6B0048396F /* .gitignore */; };
-		A5B308D02EABF2B40046A2FE /* Info.plist in Resources */ = {isa = PBXBuildFile; fileRef = A5B308CF2EABF2B40046A2FE /* Info.plist */; };
 		A5B3622A2EABF2DE0046A2FE /* firebase.json in Resources */ = {isa = PBXBuildFile; fileRef = A5B308D12EABF2DE0046A2FE /* firebase.json */; };
 		A5CC52EE2EA8A03B00F477BD /* HapticService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A5CC52ED2EA8A03B00F477BD /* HapticService.swift */; };
+		A5F4D8432EAC157700C875AC /* FirebaseFirestore in Frameworks */ = {isa = PBXBuildFile; productRef = A5F4D8422EAC157700C875AC /* FirebaseFirestore */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -41,7 +41,6 @@
 		A5B11F802EA829040048396F /* MessageAIUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = MessageAIUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		A5B11F9F2EA82D640048396F /* README.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = README.md; sourceTree = "<group>"; };
 		A5B11FA12EA82D6B0048396F /* .gitignore */ = {isa = PBXFileReference; lastKnownFileType = text; path = .gitignore; sourceTree = "<group>"; };
-		A5B308CF2EABF2B40046A2FE /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		A5B308D12EABF2DE0046A2FE /* firebase.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = firebase.json; sourceTree = "<group>"; };
 		A5CC52ED2EA8A03B00F477BD /* HapticService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HapticService.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -69,9 +68,10 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				A52EBF622EA85C3D008D65D8 /* FirebaseAnalytics in Frameworks */,
 				A52EBF612EA85C3D008D65D8 /* FirebaseMessaging in Frameworks */,
+				A5F4D8432EAC157700C875AC /* FirebaseFirestore in Frameworks */,
 				A52EBF602EA85C3D008D65D8 /* FirebaseDatabase in Frameworks */,
+				A56D3F902EAC16F100C786CC /* FirebaseAnalytics in Frameworks */,
 				A52EBF5F2EA85C3D008D65D8 /* FirebaseAuth in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -93,6 +93,13 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		A56D3F8E2EAC16F100C786CC /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
 		A5B11F5E2EA829030048396F = {
 			isa = PBXGroup;
 			children = (
@@ -104,7 +111,7 @@
 				A5B11F9F2EA82D640048396F /* README.md */,
 				A5B11FA12EA82D6B0048396F /* .gitignore */,
 				A5CC52ED2EA8A03B00F477BD /* HapticService.swift */,
-				A5B308CF2EABF2B40046A2FE /* Info.plist */,
+				A56D3F8E2EAC16F100C786CC /* Frameworks */,
 			);
 			sourceTree = "<group>";
 		};
@@ -141,7 +148,8 @@
 				A5FB00012EA8300000000001 /* FirebaseAuth */,
 				A5FB00022EA8300000000002 /* FirebaseDatabase */,
 				A5FB00042EA8300000000004 /* FirebaseMessaging */,
-				A5FB00052EA8300000000005 /* FirebaseAnalytics */,
+				A5F4D8422EAC157700C875AC /* FirebaseFirestore */,
+				A56D3F8F2EAC16F100C786CC /* FirebaseAnalytics */,
 			);
 			productName = MessageAI;
 			productReference = A5B11F672EA829030048396F /* MessageAI.app */;
@@ -245,7 +253,6 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				A5B308D02EABF2B40046A2FE /* Info.plist in Resources */,
 				A5B11FA02EA82D640048396F /* README.md in Resources */,
 				A5B11FA22EA82D6B0048396F /* .gitignore in Resources */,
 				A5B3622A2EABF2DE0046A2FE /* firebase.json in Resources */,
@@ -633,6 +640,16 @@
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
+		A56D3F8F2EAC16F100C786CC /* FirebaseAnalytics */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = A5FB00002EA8300000000000 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseAnalytics;
+		};
+		A5F4D8422EAC157700C875AC /* FirebaseFirestore */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = A5FB00002EA8300000000000 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseFirestore;
+		};
 		A5FB00012EA8300000000001 /* FirebaseAuth */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = A5FB00002EA8300000000000 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
@@ -647,11 +664,6 @@
 			isa = XCSwiftPackageProductDependency;
 			package = A5FB00002EA8300000000000 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
 			productName = FirebaseMessaging;
-		};
-		A5FB00052EA8300000000005 /* FirebaseAnalytics */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = A5FB00002EA8300000000000 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
-			productName = FirebaseAnalytics;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

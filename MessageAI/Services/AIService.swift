@@ -10,6 +10,12 @@ import FirebaseAuth
 import FirebaseDatabase
 import Combine
 
+// MARK: - Notification Extension
+
+extension Notification.Name {
+    static let openAIKeyUpdated = Notification.Name("openAIKeyUpdated")
+}
+
 @MainActor
 class AIService: ObservableObject {
     static let shared = AIService()
@@ -18,7 +24,7 @@ class AIService: ObservableObject {
     @Published var lastError: String?
     
     // Configuration
-    private let openAIAPIKey: String
+    private var openAIAPIKey: String
     private let openAIBaseURL = "https://api.openai.com/v1"
     private let model = "gpt-4o-mini" // Fast and cost-effective
     
@@ -27,21 +33,74 @@ class AIService: ObservableObject {
     private var actionItemCache: [String: [ActionItem]] = [:]
     
     private init() {
+        // Initialize with default
+        self.openAIAPIKey = ""
+        
         // Load API key from multiple sources (most secure first)
-        if let apiKey = ProcessInfo.processInfo.environment["OPENAI_API_KEY"],
+        loadAPIKey()
+        
+        // Listen for API key updates
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(apiKeyUpdated(_:)),
+            name: .openAIKeyUpdated,
+            object: nil
+        )
+    }
+    
+    private func loadAPIKey() {
+        // Debug: Print all environment variables that might be OpenAI related
+        print("🔍 Debugging API Key Loading...")
+        print("🔍 Environment variables:")
+        for (key, value) in ProcessInfo.processInfo.environment {
+            if key.lowercased().contains("openai") || key.lowercased().contains("api") {
+                let maskedValue = value.isEmpty ? "(empty)" : "\(value.prefix(8))..."
+                print("  \(key): \(maskedValue)")
+            }
+        }
+        
+        if let apiKey = UserDefaults.standard.string(forKey: "openai_api_key"),
            !apiKey.isEmpty && apiKey != "YOUR_OPENAI_API_KEY_HERE" {
-            // Environment variable (most secure)
+            // User-configured API key (highest priority)
             self.openAIAPIKey = apiKey
+            print("✅ Using user-configured OpenAI API key")
+        } else if let apiKey = ProcessInfo.processInfo.environment["OPENAI_API_KEY"],
+           !apiKey.isEmpty && apiKey != "YOUR_OPENAI_API_KEY_HERE" {
+            // Environment variable
+            self.openAIAPIKey = apiKey
+            print("✅ Using OpenAI API key from environment")
         } else if let apiKey = Bundle.main.object(forInfoDictionaryKey: "OPENAI_API_KEY") as? String,
            !apiKey.isEmpty && apiKey != "YOUR_OPENAI_API_KEY_HERE" {
-            // Info.plist (convenient for development)
+            // Info.plist
             self.openAIAPIKey = apiKey
+            print("✅ Using OpenAI API key from Info.plist")
         } else {
+            // Check UserDefaults for any OpenAI-related keys
+            print("🔍 UserDefaults keys containing 'openai':")
+            for key in UserDefaults.standard.dictionaryRepresentation().keys {
+                if key.lowercased().contains("openai") {
+                    let value = UserDefaults.standard.string(forKey: key) ?? "(not string)"
+                    let maskedValue = value.isEmpty ? "(empty)" : "\(value.prefix(8))..."
+                    print("  \(key): \(maskedValue)")
+                }
+            }
+            
             // Fallback to placeholder for demo mode
             self.openAIAPIKey = "YOUR_OPENAI_API_KEY"
             print("⚠️ OpenAI API key not configured. AI features will use mock responses.")
-            print("💡 Set OPENAI_API_KEY in Info.plist or as environment variable")
+            print("💡 Configure API key in Settings or set OPENAI_API_KEY in environment/Info.plist")
         }
+    }
+    
+    @objc private func apiKeyUpdated(_ notification: Notification) {
+        if let newKey = notification.object as? String {
+            self.openAIAPIKey = newKey
+            print("🔄 OpenAI API key updated")
+        }
+    }
+    
+    deinit {
+        NotificationCenter.default.removeObserver(self)
     }
     
     // MARK: - Cloud Functions Integration (Phase A)

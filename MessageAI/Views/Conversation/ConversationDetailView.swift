@@ -9,6 +9,11 @@ import SwiftUI
 import FirebaseDatabase
 import PhotosUI
 
+// Foundation Models for on-device AI translation (if available)
+#if canImport(FoundationModels)
+@preconcurrency import FoundationModels
+#endif
+
 struct ConversationDetailView: View {
     let conversation: Conversation
     let otherUser: User?
@@ -32,7 +37,8 @@ struct ConversationDetailView: View {
     @State private var showTranslateSheet = false
     @State private var selectedMessageForTranslation: Message?
     @State private var translatedText: String?
-    @State private var targetLanguage = "English"
+    @State private var targetLanguage = "en"
+    @State private var showTranslationSettings = false
 
     // UI state
     @State private var showErrorAlert = false
@@ -199,7 +205,19 @@ struct ConversationDetailView: View {
                                 .foregroundStyle(.secondary)
                         }
                     }
+            }
+            
+            ToolbarItem(placement: .topBarTrailing) {
+                Menu {
+                    Button {
+                        showTranslationSettings = true
+                    } label: {
+                        Label("Translation Settings", systemImage: "globe")
+                    }
+                } label: {
+                    Image(systemName: "ellipsis.circle")
                 }
+            }
         }
         .sheet(isPresented: $showEditSheet) {
             editMessageSheet
@@ -209,6 +227,9 @@ struct ConversationDetailView: View {
         }
         .sheet(isPresented: $showTranslateSheet) {
             translateSheet
+        }
+        .sheet(isPresented: $showTranslationSettings) {
+            OpenAISettingsView()
         }
         .sheet(isPresented: $showVoiceRecording) {
             voiceRecordingSheet
@@ -448,12 +469,26 @@ struct ConversationDetailView: View {
 
                     // Language selector
                     Picker("Translate to", selection: $targetLanguage) {
-                        Text("English").tag("English")
-                        Text("Spanish").tag("Spanish")
-                        Text("French").tag("French")
-                        Text("German").tag("German")
-                        Text("Chinese").tag("Chinese")
-                        Text("Arabic").tag("Arabic")
+                        Text("English").tag("en")
+                        Text("Spanish").tag("es") 
+                        Text("French").tag("fr")
+                        Text("German").tag("de")
+                        Text("Italian").tag("it")
+                        Text("Portuguese").tag("pt")
+                        Text("Russian").tag("ru")
+                        Text("Japanese").tag("ja")
+                        Text("Korean").tag("ko")
+                        Text("Chinese").tag("zh")
+                        Text("Arabic").tag("ar")
+                        Text("Dutch").tag("nl")
+                        Text("Polish").tag("pl")
+                        Text("Turkish").tag("tr")
+                        Text("Hebrew").tag("he")
+                        Text("Thai").tag("th")
+                        Text("Vietnamese").tag("vi")
+                        Text("Ukrainian").tag("uk")
+                        Text("Czech").tag("cs")
+                        Text("Hungarian").tag("hu")
                     }
                     .pickerStyle(.menu)
 
@@ -475,6 +510,12 @@ struct ConversationDetailView: View {
                         .cornerRadius(10)
                     }
                     .disabled(isLoadingAI)
+                    
+                    #if canImport(FoundationModels)
+                    if #available(iOS 26.0, *) {
+                        FoundationModelsStatusView()
+                    }
+                    #endif
 
                     // Translated text
                     if let translated = translatedText {
@@ -483,13 +524,16 @@ struct ConversationDetailView: View {
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
 
-                            Text(translated)
-                                .font(.body)
-                                .padding()
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .background(Color.green.opacity(0.1))
-                                .cornerRadius(8)
-                                .textSelection(.enabled)
+                            ScrollView {
+                                Text(cleanTranslationText(translated))
+                                    .font(.body)
+                                    .padding()
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .background(Color.green.opacity(0.1))
+                                    .cornerRadius(8)
+                                    .textSelection(.enabled)
+                            }
+                            .frame(maxHeight: 300)
                         }
                     }
 
@@ -535,6 +579,24 @@ struct ConversationDetailView: View {
     
     @ViewBuilder
     private func messageContextMenu(for message: Message) -> some View {
+        // Translate option (available for all messages)
+        Button {
+            selectedMessageForTranslation = message
+            showTranslateSheet = true
+        } label: {
+            Label("Translate", systemImage: "globe")
+        }
+        
+        // React option
+        Button {
+            reactionMessageId = message.id
+            showReactionPicker = true
+        } label: {
+            Label("React", systemImage: "face.smiling")
+        }
+        
+        Divider()
+        
         if message.senderId == authService.currentUser?.id {
             // Own message
             if message.canEdit(by: authService.currentUser?.id ?? "") {
@@ -563,13 +625,6 @@ struct ConversationDetailView: View {
             } label: {
                 Label("Delete for Me", systemImage: "trash")
             }
-        }
-        
-        Button {
-            reactionMessageId = message.id
-            showReactionPicker = true
-        } label: {
-            Label("React", systemImage: "face.smiling")
         }
     }
 
@@ -936,11 +991,27 @@ struct ConversationDetailView: View {
 
         do {
             print("🌐 Translating message to \(targetLang)...")
+            
+            // Try using Foundation Models for on-device translation first
+            #if canImport(FoundationModels)
+            if #available(iOS 26.0, *) {
+                if let onDeviceTranslation = try await translateWithFoundationModels(text: message.text, targetLang: targetLang) {
+                    await MainActor.run {
+                        translatedText = onDeviceTranslation
+                        aiError = nil
+                        print("✅ Translation completed using Foundation Models")
+                    }
+                    return
+                }
+            }
+            #endif
+            
+            // Fallback to existing inference manager
             let result = try await inferenceManager.translate(text: message.text, targetLang: targetLang)
             await MainActor.run {
                 translatedText = result
                 aiError = nil
-                print("✅ Translation completed")
+                print("✅ Translation completed using external service")
             }
         } catch {
             print("❌ Translation error: \(error.localizedDescription)")
@@ -975,6 +1046,111 @@ struct ConversationDetailView: View {
     private func showTemporaryMessage(_ message: String) {
         errorMessage = message
         showErrorAlert = true
+    }
+    
+    // Clean translation text from server response
+    private func cleanTranslationText(_ text: String) -> String {
+        // Remove the explanatory text and just show actual translation
+        if text.contains("🌐 Translation Service Ready") {
+            // For placeholder responses, show a simple message
+            return "Translation service is ready. Configure an OpenAI API key to get actual translations, or wait for Foundation Models support."
+        } else if text.contains("[Foundation Models Translation to") {
+            // Extract just the target language info for Foundation Models placeholder
+            let lines = text.components(separatedBy: "\n")
+            if let targetLine = lines.first(where: { $0.contains("[Foundation Models Translation to") }) {
+                return targetLine.replacingOccurrences(of: "🌐 ", with: "")
+            }
+        } else if !text.contains("Original text:") && !text.contains("⚠️") && !text.contains("🌐") && !text.contains("Translation Service Ready") {
+            // If it's a clean translation result (from actual OpenAI), show it as-is
+            return text
+        }
+        
+        // Fallback: try to extract any clean translation lines
+        let lines = text.components(separatedBy: "\n").filter { line in
+            !line.contains("Original text:") &&
+            !line.contains("Target language:") &&
+            !line.contains("Translation requires:") &&
+            !line.contains("Translation Service Ready") &&
+            !line.contains("OpenAI API") &&
+            !line.contains("Foundation Models") &&
+            !line.contains("⚠️") &&
+            !line.contains("🌐") &&
+            !line.contains("Your app is") &&
+            !line.contains("The translation") &&
+            !line.contains("configured and ready") &&
+            !line.contains("when Foundation Models") &&
+            !line.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+        
+        let cleanText = lines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+        return cleanText.isEmpty ? "Translation service is ready. Configure an OpenAI API key for actual translations." : cleanText
+    }
+    
+    // MARK: - Foundation Models Translation
+    
+    #if canImport(FoundationModels)
+    @available(iOS 26.0, *)
+    private func translateWithFoundationModels(text: String, targetLang: String) async throws -> String? {
+        // Check if Foundation Models is available
+        let model = SystemLanguageModel.default
+        
+        guard case .available = model.availability else {
+            print("ℹ️ Foundation Models not available, falling back to external service")
+            return nil
+        }
+        
+        // Create a translation session
+        let instructions = """
+        You are a professional translator. Translate the given text to the target language.
+        Provide only the translated text without any explanations or additional context.
+        Maintain the original meaning and tone as closely as possible.
+        """
+        
+        let session = LanguageModelSession(instructions: instructions)
+        
+        // Create the translation prompt
+        let languageName = languageNameForCode(targetLang)
+        let prompt = "Translate the following text to \(languageName): \"\(text)\""
+        
+        do {
+            let response = try await session.respond(to: prompt)
+            let translatedText = response.content.trimmingCharacters(in: .whitespacesAndNewlines)
+            
+            // Remove any quotes that might wrap the translation
+            let cleanTranslation = translatedText.trimmingCharacters(in: CharacterSet(charactersIn: "\"'"))
+            return cleanTranslation.isEmpty ? nil : cleanTranslation
+        } catch {
+            print("❌ Foundation Models translation failed: \(error)")
+            return nil
+        }
+    }
+    #endif
+    
+    // Helper function to convert language codes to readable names
+    private func languageNameForCode(_ code: String) -> String {
+        switch code {
+        case "en": return "English"
+        case "es": return "Spanish"
+        case "fr": return "French"
+        case "de": return "German"
+        case "it": return "Italian"
+        case "pt": return "Portuguese"
+        case "ru": return "Russian"
+        case "ja": return "Japanese"
+        case "ko": return "Korean"
+        case "zh": return "Chinese"
+        case "ar": return "Arabic"
+        case "nl": return "Dutch"
+        case "pl": return "Polish"
+        case "tr": return "Turkish"
+        case "he": return "Hebrew"
+        case "th": return "Thai"
+        case "vi": return "Vietnamese"
+        case "uk": return "Ukrainian"
+        case "cs": return "Czech"
+        case "hu": return "Hungarian"
+        default: return code.uppercased()
+        }
     }
 }
 
@@ -1164,6 +1340,52 @@ struct MessageBubbleRow: View {
         return String(format: "%d:%02d", minutes, seconds)
     }
 }
+
+// MARK: - Foundation Models Status View
+
+#if canImport(FoundationModels)
+@available(iOS 26.0, *)
+struct FoundationModelsStatusView: View {
+    @State private var model = SystemLanguageModel.default
+    
+    var body: some View {
+        switch model.availability {
+        case .available:
+            HStack {
+                Image(systemName: "sparkles")
+                    .foregroundStyle(.green)
+                Text("Using on-device AI translation")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        case .unavailable(.appleIntelligenceNotEnabled):
+            HStack {
+                Image(systemName: "exclamationmark.triangle")
+                    .foregroundStyle(.orange)
+                Text("Enable Apple Intelligence for faster translations")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        case .unavailable(.deviceNotEligible):
+            HStack {
+                Image(systemName: "info.circle")
+                    .foregroundStyle(.blue)
+                Text("Using external translation service")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        default:
+            HStack {
+                Image(systemName: "cloud")
+                    .foregroundStyle(.blue)
+                Text("Using external translation service")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+}
+#endif
 
 #Preview {
     NavigationStack {

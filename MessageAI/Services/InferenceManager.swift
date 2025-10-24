@@ -127,10 +127,21 @@ class InferenceManager: ObservableObject {
         // Server provider (always available)
         providers.append(ServerInferenceProvider())
 
+        // Foundation Models provider (iOS 18.1+, when APIs become available)
+        if #available(iOS 18.1, *) {
+            let foundationModelsProvider = FoundationModelsInferenceProvider()
+            if foundationModelsProvider.isAvailable {
+                providers.insert(foundationModelsProvider, at: 0) // Highest priority for supported features
+                print("✅ Foundation Models provider registered")
+            } else {
+                print("⚠️ Foundation Models APIs not yet available - waiting for future iOS release")
+            }
+        }
+
         // CoreML provider (device-dependent)
         let coreMLProvider = CoreMLInferenceProvider()
         if coreMLProvider.isAvailable {
-            providers.insert(coreMLProvider, at: 0) // Prefer local when available
+            providers.insert(coreMLProvider, at: providers.count - 1) // Before server, after Foundation Models
             print("✅ CoreML provider registered")
         } else {
             print("⚠️ CoreML provider unavailable on this device")
@@ -145,10 +156,18 @@ class InferenceManager: ObservableObject {
             return providers.first { $0.name == "Server" }
 
         case .local:
-            // Try local first, fallback to server
+            // Try Foundation Models first for supported features
+            if #available(iOS 18.1, *),
+               let foundationModels = providers.first(where: { $0.name == "FoundationModels" && $0.supports(feature) }) {
+                return foundationModels
+            }
+            
+            // Try CoreML second
             if let local = providers.first(where: { $0.name == "CoreML" && $0.supports(feature) }) {
                 return local
             }
+            
+            // Fallback to server
             return providers.first { $0.name == "Server" }
 
         case .auto:
@@ -160,9 +179,26 @@ class InferenceManager: ObservableObject {
     private func selectProviderAuto(for feature: InferenceFeature) -> InferenceProvider? {
         // Privacy mode: always prefer on-device
         if privateMode {
+            // First try Foundation Models for supported features
+            if #available(iOS 18.1, *),
+               let foundationModels = providers.first(where: { $0.name == "FoundationModels" && $0.supports(feature) }) {
+                print("🔒 Private mode: using Foundation Models for \(feature)")
+                return foundationModels
+            }
+            
+            // Fallback to CoreML
             if let local = providers.first(where: { $0.name == "CoreML" && $0.supports(feature) }) {
                 print("🔒 Private mode: using CoreML for \(feature)")
                 return local
+            }
+        }
+
+        // Translation: Prefer Foundation Models when available
+        if feature == .translate {
+            if #available(iOS 18.1, *),
+               let foundationModels = providers.first(where: { $0.name == "FoundationModels" && $0.supports(feature) }) {
+                print("🌐 Using Foundation Models for translation (on-device)")
+                return foundationModels
             }
         }
 
@@ -177,23 +213,30 @@ class InferenceManager: ObservableObject {
         ]
 
         if offlineOnlyFeatures.contains(feature) {
-            // Prefer on-device for these
+            // Prefer CoreML for these
             if let local = providers.first(where: { $0.name == "CoreML" && $0.supports(feature) }) {
                 return local
             }
         }
 
-        // Complex features: prefer server when online
-        let serverOptimalFeatures: [InferenceFeature] = [
+        // Complex features that benefit from Foundation Models when available
+        let foundationModelsOptimalFeatures: [InferenceFeature] = [
             .summarize,
             .actionItems,
             .decisions,
             .priority,
-            .search,
             .translate
         ]
 
-        if serverOptimalFeatures.contains(feature) {
+        if foundationModelsOptimalFeatures.contains(feature) {
+            // First try Foundation Models if available
+            if #available(iOS 18.1, *),
+               let foundationModels = providers.first(where: { $0.name == "FoundationModels" && $0.supports(feature) }) {
+                print("🧠 Using Foundation Models for \(feature) (on-device)")
+                return foundationModels
+            }
+            
+            // Fallback to server when online
             if networkMonitor.isConnected {
                 return providers.first { $0.name == "Server" }
             } else {

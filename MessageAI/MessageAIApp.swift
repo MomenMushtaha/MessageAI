@@ -11,6 +11,7 @@ import FirebaseCore
 import FirebaseAuth
 import FirebaseDatabase
 import FirebaseMessaging
+import FirebaseAnalytics
 
 @main
 struct MessageAIApp: App {
