@@ -4,14 +4,18 @@
  */
 
 const { Pinecone } = require("@pinecone-database/pinecone");
+const functions = require("firebase-functions");
 
 /**
  * Create and return a Pinecone vector store instance
  * @returns {VectorStore} Vector store interface
  */
 function pineconeVectorStore() {
-  const client = new Pinecone({ apiKey: process.env.PINECONE_API_KEY });
-  const index = client.Index(process.env.PINECONE_INDEX || "messageai");
+  const apiKey = process.env.PINECONE_API_KEY || functions.config().pinecone?.api_key || "placeholder";
+  const indexName = process.env.PINECONE_INDEX || functions.config().pinecone?.index || "messageai";
+  
+  const client = new Pinecone({ apiKey });
+  const index = client.Index(indexName);
 
   return {
     /**

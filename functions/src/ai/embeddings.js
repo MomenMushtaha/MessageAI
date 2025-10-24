@@ -3,8 +3,21 @@
  */
 
 const OpenAI = require("openai");
+const functions = require("firebase-functions");
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+let openai = null;
+
+/**
+ * Get or create OpenAI client instance
+ * @returns {OpenAI} OpenAI client
+ */
+function getOpenAIClient() {
+  if (!openai) {
+    const apiKey = process.env.OPENAI_API_KEY || functions.config().openai?.api_key;
+    openai = new OpenAI({ apiKey: apiKey || "placeholder" });
+  }
+  return openai;
+}
 
 /**
  * Generate embeddings for text array
@@ -12,7 +25,8 @@ const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
  * @returns {Promise<number[][]>} Array of embedding vectors
  */
 async function embedText(texts) {
-  const res = await openai.embeddings.create({
+  const client = getOpenAIClient();
+  const res = await client.embeddings.create({
     model: "text-embedding-3-small",
     input: texts,
   });

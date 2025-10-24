@@ -775,6 +775,75 @@ struct ConversationDetailView: View {
             return "\(days)d ago"
         }
     }
+    
+    // MARK: - AI Actions (Phase B)
+
+    private func summarizeTap() async {
+        isLoadingAI = true
+        defer { isLoadingAI = false }
+
+        do {
+            print("🤖 Calling AI summarize for conversation: \(conversation.id)")
+            let summary = try await aiService.summarize(convId: conversation.id, window: "week", style: "bullets")
+            await MainActor.run {
+                aiSummary = summary
+                aiError = nil
+            }
+        } catch {
+            print("❌ AI summarize error: \(error.localizedDescription)")
+            await MainActor.run {
+                aiError = error.localizedDescription
+                errorMessage = "AI Summarize failed: \(error.localizedDescription)"
+                showErrorAlert = true
+            }
+        }
+    }
+
+    private func actionsTap() async {
+        isLoadingAI = true
+        defer { isLoadingAI = false }
+
+        do {
+            print("🤖 Extracting action items for conversation: \(conversation.id)")
+            let response = try await aiService.actionItems(convId: conversation.id)
+            await MainActor.run {
+                aiActions = response.actions
+                aiError = nil
+            }
+        } catch {
+            print("❌ AI action items error: \(error.localizedDescription)")
+            await MainActor.run {
+                aiError = error.localizedDescription
+                errorMessage = "AI Actions failed: \(error.localizedDescription)"
+                showErrorAlert = true
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func actionItemCard(_ action: AIAction) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(action.title)
+                .font(.caption)
+                .fontWeight(.semibold)
+                .lineLimit(2)
+            Text("Owner: \(action.ownerId)")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+            Text("Due: \(action.due)")
+                .font(.caption2)
+                .foregroundStyle(.blue)
+        }
+        .padding(8)
+        .frame(width: 150)
+        .background(Color(.systemGray6))
+        .cornerRadius(8)
+    }
+
+    private func showTemporaryMessage(_ message: String) {
+        errorMessage = message
+        showErrorAlert = true
+    }
 }
 
 // MARK: - Message Bubble Row
@@ -961,75 +1030,6 @@ struct MessageBubbleRow: View {
         let minutes = Int(duration) / 60
         let seconds = Int(duration) % 60
         return String(format: "%d:%02d", minutes, seconds)
-    }
-
-    // MARK: - AI Actions (Phase B)
-
-    private func summarizeTap() async {
-        isLoadingAI = true
-        defer { isLoadingAI = false }
-
-        do {
-            print("🤖 Calling AI summarize for conversation: \(conversation.id)")
-            let summary = try await aiService.summarize(convId: conversation.id, window: "week", style: "bullets")
-            await MainActor.run {
-                aiSummary = summary
-                aiError = nil
-            }
-        } catch {
-            print("❌ AI summarize error: \(error.localizedDescription)")
-            await MainActor.run {
-                aiError = error.localizedDescription
-                errorMessage = "AI Summarize failed: \(error.localizedDescription)"
-                showErrorAlert = true
-            }
-        }
-    }
-
-    private func actionsTap() async {
-        isLoadingAI = true
-        defer { isLoadingAI = false }
-
-        do {
-            print("🤖 Extracting action items for conversation: \(conversation.id)")
-            let response = try await aiService.actionItems(convId: conversation.id)
-            await MainActor.run {
-                aiActions = response.actions
-                aiError = nil
-            }
-        } catch {
-            print("❌ AI action items error: \(error.localizedDescription)")
-            await MainActor.run {
-                aiError = error.localizedDescription
-                errorMessage = "AI Actions failed: \(error.localizedDescription)"
-                showErrorAlert = true
-            }
-        }
-    }
-
-    @ViewBuilder
-    private func actionItemCard(_ action: AIAction) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(action.title)
-                .font(.caption)
-                .fontWeight(.semibold)
-                .lineLimit(2)
-            Text("Owner: \(action.ownerId)")
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-            Text("Due: \(action.due)")
-                .font(.caption2)
-                .foregroundStyle(.blue)
-        }
-        .padding(8)
-        .frame(width: 150)
-        .background(Color(.systemGray6))
-        .cornerRadius(8)
-    }
-
-    private func showTemporaryMessage(_ message: String) {
-        errorMessage = message
-        showErrorAlert = true
     }
 }
 

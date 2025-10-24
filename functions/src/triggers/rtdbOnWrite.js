@@ -13,7 +13,18 @@ const { pineconeVectorStore } = require("../ai/vectorStore");
 if (!admin.apps.length) admin.initializeApp();
 
 const db = admin.database();
-const store = pineconeVectorStore();
+let store = null;
+
+/**
+ * Get or create Pinecone vector store instance
+ * @returns {Object} Vector store
+ */
+function getVectorStore() {
+  if (!store) {
+    store = pineconeVectorStore();
+  }
+  return store;
+}
 
 /**
  * RTDB message shape:
@@ -79,7 +90,7 @@ exports.onMessageCreate = functions.database
       }));
 
       // Upsert to Pinecone
-      await store.upsertEmbedding(items);
+      await getVectorStore().upsertEmbedding(items);
       console.log(`✅ Upserted ${items.length} vector(s) to Pinecone`);
 
       return { success: true, chunks: chunks.length };

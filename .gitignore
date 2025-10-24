@@ -71,3 +71,11 @@ Config.xcconfig
 *.mobileprovision
 credentials.json
 auth.json
+
+# Firebase
+.firebaserc
+.firebase/
+firebase-debug.log
+firestore-debug.log
+ui-debug.log
+functions/firepit-log.txt
