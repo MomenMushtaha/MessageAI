@@ -60,5 +60,9 @@
 	<string>MessageAI needs permission to save photos and videos to your photo library.</string>
 	<key>S3_UPLOAD_ENDPOINT</key>
 	<string>https://us-central1-messagingai-swift.cloudfunctions.net/generateUploadUrl</string>
+	<key>MOCHAIN_CHAT_ENDPOINT</key>
+	<string>https://us-central1-messagingai-swift.cloudfunctions.net/mochainChat</string>
+	<key>MUSHLIFTS_CHAT_ENDPOINT</key>
+	<string>https://us-central1-messagingai-swift.cloudfunctions.net/mushliftsChat</string>
 </dict>
 </plist>

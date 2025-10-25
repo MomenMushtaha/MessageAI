@@ -22,6 +22,7 @@ struct ChatListView: View {
     @State private var showPerformanceMonitor = false
     @State private var showProfile = false
     @State private var showMoChain = false
+    @State private var showMushLifts = false
 
     var body: some View {
         NavigationStack {
@@ -45,9 +46,15 @@ struct ChatListView: View {
                 .cornerRadius(10)
                 .padding()
                 
-                // MoChain AI Assistant Card
-                MoChainCard {
-                    showMoChain = true
+                // AI Assistants Cards
+                VStack(spacing: 8) {
+                    MoChainCard {
+                        showMoChain = true
+                    }
+                    
+                    MushLiftsCard {
+                        showMushLifts = true
+                    }
                 }
                 .padding(.horizontal)
                 .padding(.bottom, 8)
@@ -157,6 +164,10 @@ struct ChatListView: View {
                 MoChainChatView()
                     .environmentObject(authService)
             }
+            .sheet(isPresented: $showMushLifts) {
+                MushLiftsChatView()
+                    .environmentObject(authService)
+            }
             .navigationDestination(item: $selectedConversationId) { conversationId in
                 if let conversation = chatService.conversations.first(where: { $0.id == conversationId }) {
                     let otherUserId = getOtherUserId(for: conversation)
@@ -194,11 +205,13 @@ struct ChatListView: View {
                     }
                 }
             }
-            .confirmationDialog("Are you sure you want to logout?", isPresented: $showLogoutConfirmation, titleVisibility: .visible) {
+            .alert("Logout", isPresented: $showLogoutConfirmation) {
+                Button("Cancel", role: .cancel) {}
                 Button("Logout", role: .destructive) {
                     handleLogout()
                 }
-                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("Are you sure you want to logout?")
             }
             .alert("Delete Failed", isPresented: $showDeleteError) {
                 Button("OK", role: .cancel) {}
@@ -490,6 +503,75 @@ struct MoChainCard: View {
                     .strokeBorder(
                         LinearGradient(
                             colors: [.purple.opacity(0.3), .blue.opacity(0.3)],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        ),
+                        lineWidth: 1
+                    )
+            )
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+// MARK: - MushLifts Card
+
+struct MushLiftsCard: View {
+    let action: () -> Void
+    
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 12) {
+                // Gradient Circle Avatar
+                Circle()
+                    .fill(
+                        LinearGradient(
+                            colors: [.green, .orange],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+                    .frame(width: 50, height: 50)
+                    .overlay {
+                        Image(systemName: "figure.strengthtraining.traditional")
+                            .font(.system(size: 24))
+                            .foregroundStyle(.white)
+                    }
+                    .shadow(color: .green.opacity(0.3), radius: 8, x: 0, y: 4)
+                
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack {
+                        Text("MushLifts")
+                            .font(.headline)
+                            .foregroundStyle(.primary)
+                        
+                        Image(systemName: "flame.fill")
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                    }
+                    
+                    Text("Your online fitness trainer")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+                
+                Spacer()
+                
+                Image(systemName: "chevron.right")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .padding()
+            .background(
+                RoundedRectangle(cornerRadius: 16)
+                    .fill(Color(.systemBackground))
+                    .shadow(color: Color.black.opacity(0.05), radius: 8, x: 0, y: 2)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 16)
+                    .strokeBorder(
+                        LinearGradient(
+                            colors: [.green.opacity(0.3), .orange.opacity(0.3)],
                             startPoint: .topLeading,
                             endPoint: .bottomTrailing
                         ),

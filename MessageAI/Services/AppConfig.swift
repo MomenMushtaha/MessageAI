@@ -31,4 +31,16 @@ enum AppConfig {
         }
         return nil
     }
+    
+    // MushLifts Fitness AI Assistant endpoint
+    // Example: https://us-central1-your-project.cloudfunctions.net/mushliftsChat
+    static var mushLiftsChatEndpoint: String? {
+        if let value = Bundle.main.object(forInfoDictionaryKey: "MUSHLIFTS_CHAT_ENDPOINT") as? String, !value.isEmpty {
+            return value
+        }
+        if let env = ProcessInfo.processInfo.environment["MUSHLIFTS_CHAT_ENDPOINT"], !env.isEmpty {
+            return env
+        }
+        return nil
+    }
 }
