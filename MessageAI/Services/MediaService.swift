@@ -110,6 +110,44 @@ class MediaService {
         return target.publicUrl
     }
 
+    /// Upload or replace a user avatar image on S3
+    func uploadUserAvatar(
+        _ image: UIImage,
+        userId: String
+    ) async throws -> String {
+        print("📤 Uploading user avatar for userId: \(userId)")
+
+        guard let imageData = compressImage(image, maxDimension: 1024, quality: 0.8) else {
+            throw MediaError.compressionFailed
+        }
+
+        let descriptor = S3FileDescriptor(
+            key: "users/\(userId)/avatar/avatar.jpg",
+            contentType: "image/jpeg"
+        )
+
+        let targets = try await requestS3UploadURLs(
+            conversationId: "user-profile",
+            messageId: "user-avatar-\(userId)",
+            userId: userId,
+            files: [descriptor]
+        )
+
+        guard let target = targets.first else {
+            throw MediaError.invalidURL
+        }
+
+        try await httpPUTUpload(
+            to: target.uploadUrl,
+            data: imageData,
+            contentType: descriptor.contentType,
+            progressHandler: nil
+        )
+
+        print("✅ User avatar uploaded to S3")
+        return target.publicUrl
+    }
+
     // MARK: - Image Download & Caching
 
     /// Download image with caching support
@@ -306,9 +344,19 @@ class MediaService {
 
         let (data, _) = try await httpJSONRequest(urlString: endpoint, body: body)
 
-        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let urls = json["urls"] as? [[String: String]],
-              !urls.isEmpty else {
+        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            print("❌ Failed to parse Cloud Function response as JSON")
+            throw MediaError.invalidResponse
+        }
+
+        // Check if there's an error from the Cloud Function
+        if let errorMessage = json["error"] as? String {
+            print("❌ Cloud Function returned error: \(errorMessage)")
+            throw MediaError.cloudFunctionError(errorMessage)
+        }
+
+        guard let urls = json["urls"] as? [[String: String]], !urls.isEmpty else {
+            print("❌ Cloud Function response missing 'urls' array")
             throw MediaError.invalidURL
         }
 
@@ -338,7 +386,23 @@ class MediaService {
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
-        return try await URLSession.shared.data(for: request)
+
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+
+            // Log response for debugging
+            if let httpResponse = response as? HTTPURLResponse {
+                print("📡 Cloud Function response status: \(httpResponse.statusCode)")
+            }
+            if let responseString = String(data: data, encoding: .utf8) {
+                print("📡 Cloud Function response body: \(responseString)")
+            }
+
+            return (data, response)
+        } catch {
+            print("❌ Network error calling Cloud Function: \(error.localizedDescription)")
+            throw error
+        }
     }
 
     private func httpPUTUpload(
@@ -384,6 +448,8 @@ enum MediaError: LocalizedError {
     case invalidImageData
     case uploadFailed
     case videoTooLarge
+    case invalidResponse
+    case cloudFunctionError(String)
 
     var errorDescription: String? {
         switch self {
@@ -397,6 +463,10 @@ enum MediaError: LocalizedError {
             return "Failed to upload media"
         case .videoTooLarge:
             return "Video file is too large (max 50MB)"
+        case .invalidResponse:
+            return "Invalid response from upload service"
+        case .cloudFunctionError(let message):
+            return "Upload service error: \(message)"
         }
     }
 }

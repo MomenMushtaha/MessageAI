@@ -24,6 +24,7 @@ struct Conversation: Identifiable, Codable, Hashable {
     var groupName: String?
     var groupDescription: String?
     var groupAvatarURL: String?
+    var ownerId: String? // User ID of the group owner (creator)
     var adminIds: [String]? // Array of user IDs who are admins (group creator + appointed admins)
 
     // Unread tracking - maps userId to unread count
@@ -50,6 +51,7 @@ struct Conversation: Identifiable, Codable, Hashable {
         groupName: String? = nil,
         groupDescription: String? = nil,
         groupAvatarURL: String? = nil,
+        ownerId: String? = nil,
         adminIds: [String]? = nil,
         createdAt: Date = Date()
     ) {
@@ -61,10 +63,16 @@ struct Conversation: Identifiable, Codable, Hashable {
         self.groupName = groupName
         self.groupDescription = groupDescription
         self.groupAvatarURL = groupAvatarURL
+        self.ownerId = ownerId
         self.adminIds = adminIds
         self.createdAt = createdAt
     }
 
+    // Helper to check if user is the owner
+    func isOwner(_ userId: String) -> Bool {
+        return ownerId == userId
+    }
+    
     // Helper to check if user is admin
     func isAdmin(_ userId: String) -> Bool {
         return adminIds?.contains(userId) ?? false

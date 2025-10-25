@@ -36,6 +36,47 @@ class ChatService: ObservableObject {
     
     private init() {}
     
+    // MARK: - Participant Helpers
+    
+    private func buildParticipantMap(from participantIds: [String]) -> [String: Bool] {
+        var map: [String: Bool] = [:]
+        for id in participantIds {
+            map[id] = true
+        }
+        return map
+    }
+    
+    private func extractParticipantIds(from data: [String: Any]) -> [String] {
+        if let ids = data["participantIds"] as? [String] {
+            return ids
+        }
+        
+        if let anyIds = data["participantIds"] as? [Any] {
+            return anyIds.compactMap { $0 as? String }
+        }
+        
+        if let map = data["participantMap"] as? [String: Any] {
+            return map.compactMap { key, value in
+                if let boolValue = value as? Bool {
+                    return boolValue ? key : nil
+                }
+                
+                if let dictValue = value as? [String: Any] {
+                    if let isParticipant = dictValue["isParticipant"] as? Bool {
+                        return isParticipant ? key : nil
+                    }
+                    if let enabled = dictValue["enabled"] as? Bool {
+                        return enabled ? key : nil
+                    }
+                }
+                
+                return nil
+            }
+        }
+        
+        return []
+    }
+    
     // MARK: - Fetch All Users
     
     func fetchAllUsers(excludingUserId: String) async {
@@ -59,19 +100,24 @@ class ChatService: ObservableObject {
             }
 
             print("📊 Found \(usersDict.count) total users in database")
+            print("📋 All user IDs in database: \(usersDict.keys.sorted())")
 
             allUsers = usersDict.compactMap { (userId, data) -> User? in
+                print("🔍 Processing user ID: \(userId)")
+
                 guard userId != excludingUserId else {
                     print("⏭️ Skipping current user: \(userId)")
                     return nil
                 }
 
-                print("✅ Adding user: \(userId) - \(data["displayName"] as? String ?? "Unknown")")
+                let displayName = data["displayName"] as? String ?? "Unknown"
+                let email = data["email"] as? String ?? ""
+                print("✅ Adding user: \(userId) - \(displayName) (\(email))")
 
                 return User(
                     id: data["id"] as? String ?? userId,
-                    displayName: data["displayName"] as? String ?? "Unknown",
-                    email: data["email"] as? String ?? "",
+                    displayName: displayName,
+                    email: email,
                     avatarURL: data["avatarURL"] as? String,
                     createdAt: Date(timeIntervalSince1970: (data["createdAt"] as? TimeInterval ?? 0) / 1000),
                     isOnline: data["isOnline"] as? Bool ?? false,
@@ -88,6 +134,7 @@ class ChatService: ObservableObject {
             CacheManager.shared.cacheUsers(allUsers)
 
             print("✅ Fetched \(allUsers.count) users (excluding current user)")
+            print("📋 Final user list: \(allUsers.map { "\($0.displayName) (\($0.email))" }.joined(separator: ", "))")
         } catch {
             print("❌ Error fetching users: \(error.localizedDescription)")
             allUsers = []
@@ -98,6 +145,19 @@ class ChatService: ObservableObject {
     
     func observeConversations(userId: String) {
         print("👂 Starting to observe conversations for user: \(userId)")
+        
+        // First, load from local storage (instant)
+        Task { @MainActor in
+            do {
+                let localConversations = try LocalStorageService.shared.getConversations(for: userId)
+                if !localConversations.isEmpty {
+                    self.conversations = localConversations
+                    print("💾 Loaded \(localConversations.count) conversations from local storage")
+                }
+            } catch {
+                print("⚠️ Failed to load local conversations: \(error.localizedDescription)")
+            }
+        }
         
         conversationsListener = db.child("conversations")
             .queryOrdered(byChild: "lastMessageAt")
@@ -118,13 +178,60 @@ class ChatService: ObservableObject {
                         return
                     }
                     
-                    let conversations = conversationsDict.compactMap { (convId, data) -> Conversation? in
-                        guard let participantIds = data["participantIds"] as? [String],
-                              participantIds.contains(userId) else {
+                    var allConversations = conversationsDict.compactMap { (convId, data) -> Conversation? in
+                        let participantIds = self.extractParticipantIds(from: data)
+                        guard participantIds.contains(userId) else {
                             return nil
                         }
 
-                        return Conversation(
+                        // Parse group-specific fields
+                        let ownerId = data["ownerId"] as? String
+                        let adminIds = data["adminIds"] as? [String]
+                        let groupDescription = data["groupDescription"] as? String
+                        
+                        // Parse unread counts
+                        var unreadCounts: [String: Int]?
+                        if let unreadData = data["unreadCounts"] as? [String: Int] {
+                            unreadCounts = unreadData
+                        }
+                        
+                        // Parse pinned messages
+                        var pinnedMessageIds: [String]?
+                        if let pinnedData = data["pinnedMessageIds"] as? [String] {
+                            pinnedMessageIds = pinnedData
+                        }
+                        
+                        // Parse member join dates
+                        var memberJoinDates: [String: Date]?
+                        if let joinDatesData = data["memberJoinDates"] as? [String: TimeInterval] {
+                            memberJoinDates = joinDatesData.mapValues { Date(timeIntervalSince1970: $0 / 1000) }
+                        }
+                        
+                        // Parse participant settings
+                        var participantSettings: [String: ParticipantSettings]?
+                        if let settingsData = data["participantSettings"] as? [String: [String: Any]] {
+                            participantSettings = settingsData.compactMapValues { settings in
+                                let isMuted = settings["isMuted"] as? Bool ?? false
+                                var muteUntil: Date?
+                                if let muteTimestamp = settings["muteUntil"] as? TimeInterval {
+                                    muteUntil = Date(timeIntervalSince1970: muteTimestamp / 1000)
+                                }
+                                return ParticipantSettings(isMuted: isMuted, muteUntil: muteUntil)
+                            }
+                        }
+                        
+                        // Parse group permissions
+                        var groupPermissions: GroupPermissions?
+                        if let permissionsData = data["groupPermissions"] as? [String: Any] {
+                            let onlyAdminsCanMessage = permissionsData["onlyAdminsCanMessage"] as? Bool ?? false
+                            let onlyAdminsCanAddMembers = permissionsData["onlyAdminsCanAddMembers"] as? Bool ?? false
+                            groupPermissions = GroupPermissions(
+                                onlyAdminsCanMessage: onlyAdminsCanMessage,
+                                onlyAdminsCanAddMembers: onlyAdminsCanAddMembers
+                            )
+                        }
+
+                        var conversation = Conversation(
                             id: convId,
                             type: ConversationType(rawValue: data["type"] as? String ?? "direct") ?? .direct,
                             participantIds: participantIds,
@@ -136,10 +243,59 @@ class ChatService: ObservableObject {
                                 return nil
                             }(),
                             groupName: data["groupName"] as? String,
+                            groupDescription: groupDescription,
                             groupAvatarURL: data["groupAvatarURL"] as? String,
+                            ownerId: ownerId,
+                            adminIds: adminIds,
                             createdAt: Date(timeIntervalSince1970: (data["createdAt"] as? TimeInterval ?? 0) / 1000)
                         )
-                    }.sorted { ($0.lastMessageAt ?? $0.createdAt) > ($1.lastMessageAt ?? $1.createdAt) }
+                        
+                        // Set additional properties
+                        conversation.unreadCounts = unreadCounts
+                        conversation.pinnedMessageIds = pinnedMessageIds
+                        conversation.participantSettings = participantSettings
+                        conversation.memberJoinDates = memberJoinDates
+                        conversation.groupPermissions = groupPermissions
+                        
+                        return conversation
+                    }
+
+                    // Filter out conversations the user has deleted (unless new messages arrived)
+                    var conversations: [Conversation] = []
+                    for conv in allConversations {
+                        // Check if user has deleted this conversation
+                        let deletedSnapshot = try? await self.db.child("conversations")
+                            .child(conv.id)
+                            .child("participantSettings")
+                            .child(userId)
+                            .child("deletedAt")
+                            .getData()
+
+                        // Check if conversation was deleted
+                        if let deletedTimestamp = deletedSnapshot?.value as? TimeInterval {
+                            // Conversation was deleted - only show if there are new messages after deletion
+                            if let lastMessageAt = conv.lastMessageAt {
+                                let lastMessageTimestamp = lastMessageAt.timeIntervalSince1970 * 1000
+                                if lastMessageTimestamp > deletedTimestamp {
+                                    // New messages since deletion - show the conversation
+                                    print("📬 Conversation \(conv.id) reappearing (new messages after deletion)")
+                                    conversations.append(conv)
+                                } else {
+                                    // No new messages - keep it hidden
+                                    print("🗑️ Hiding conversation \(conv.id) (deleted by user, no new messages)")
+                                }
+                            } else {
+                                // No lastMessageAt - keep it hidden
+                                print("🗑️ Hiding conversation \(conv.id) (deleted by user, no messages)")
+                            }
+                        } else {
+                            // Not deleted - always show
+                            conversations.append(conv)
+                        }
+                    }
+
+                    // Sort by most recent
+                    conversations.sort { ($0.lastMessageAt ?? $0.createdAt) > ($1.lastMessageAt ?? $1.createdAt) }
 
                     // Check if conversations have actually changed
                     let conversationIds = Set(conversations.map { $0.id })
@@ -151,6 +307,13 @@ class ChatService: ObservableObject {
                     if hasNewConversations || countChanged {
                         self.conversations = conversations
                         print("✅ Loaded \(conversations.count) conversations")
+                        
+                        // Save conversations to local storage in background
+                        Task.detached(priority: .background) {
+                            for conversation in conversations {
+                                try? await LocalStorageService.shared.saveConversation(conversation, isSynced: true)
+                            }
+                        }
                     }
                 }
             })
@@ -197,15 +360,37 @@ class ChatService: ObservableObject {
             .queryLimited(toLast: UInt(messagesPerPage))
             .observe(.value, with: { [weak self] snapshot in
                 guard let self = self else { return }
-                
+
                 Task.detached(priority: .userInitiated) {
+                    // Get current user ID and clearedAt timestamp
+                    let currentUserId = await AuthService.shared.currentUser?.id
+                    var clearedAt: TimeInterval = 0
+
+                    if let userId = currentUserId {
+                        do {
+                            let clearedSnapshot = try await self.db.child("conversations")
+                                .child(conversationId)
+                                .child("participantSettings")
+                                .child(userId)
+                                .child("clearedAt")
+                                .getData()
+
+                            if let timestamp = clearedSnapshot.value as? TimeInterval {
+                                clearedAt = timestamp
+                                print("📋 User cleared chat at: \(Date(timeIntervalSince1970: timestamp / 1000))")
+                            }
+                        } catch {
+                            print("⚠️ Failed to fetch clearedAt timestamp: \(error)")
+                        }
+                    }
+
                     // Parse database snapshot (expensive work off main thread)
                     guard let messagesDict = snapshot.value as? [String: [String: Any]] else {
                     print("⚠️ No messages found")
                     return
                 }
-                
-                    let dbMessages = messagesDict.compactMap { (msgId, data) -> Message? in
+
+                    let allMessages = messagesDict.compactMap { (msgId, data) -> Message? in
                         let editedAtDate: Date? = {
                             if let timestamp = data["editedAt"] as? TimeInterval { return Date(timeIntervalSince1970: timestamp / 1000) }
                             return nil
@@ -231,7 +416,22 @@ class ChatService: ObservableObject {
                             videoDuration: data["videoDuration"] as? TimeInterval
                         )
                     }
-                    
+
+                    // Filter messages based on clearedAt timestamp
+                    let dbMessages: [Message]
+                    if clearedAt > 0 {
+                        dbMessages = allMessages.filter { message in
+                            let messageTimestamp = message.createdAt.timeIntervalSince1970 * 1000
+                            return messageTimestamp > clearedAt
+                        }
+                        let filteredCount = allMessages.count - dbMessages.count
+                        if filteredCount > 0 {
+                            print("🔽 Filtered out \(filteredCount) messages (cleared by user)")
+                        }
+                    } else {
+                        dbMessages = allMessages
+                    }
+
                     // Save to local storage in background
                     Task.detached(priority: .background) {
                         for message in dbMessages {
@@ -485,11 +685,12 @@ class ChatService: ObservableObject {
 
     // MARK: - Create Conversation
     
-    func createOrGetConversation(participantIds: [String], type: ConversationType = .direct, groupName: String? = nil) async throws -> String {
+    func createOrGetConversation(participantIds: [String], type: ConversationType = .direct, groupName: String? = nil, ownerId: String? = nil) async throws -> String {
         // For direct chats, use deterministic ID
         if type == .direct && participantIds.count == 2 {
             let sortedIds = participantIds.sorted()
             let conversationId = sortedIds.joined(separator: "_")
+            let participantMap = buildParticipantMap(from: sortedIds)
             
             // Check if conversation already exists locally
             if conversations.contains(where: { $0.id == conversationId }) {
@@ -503,12 +704,18 @@ class ChatService: ObservableObject {
             
             if snapshot.exists() {
                 print("✅ Conversation already exists in database: \(conversationId)")
+                
+                if snapshot.childSnapshot(forPath: "participantMap").value == nil {
+                    try await conversationRef.child("participantMap").setValue(participantMap)
+                    print("🧩 Backfilled participantMap for existing conversation")
+                }
+
                 // Add to local array optimistically if not there yet
                 if !conversations.contains(where: { $0.id == conversationId }) {
                     let conversation = Conversation(
                         id: conversationId,
                         type: .direct,
-                        participantIds: participantIds,
+                        participantIds: sortedIds,
                         lastMessageText: nil,
                         lastMessageAt: Date(),
                         groupName: nil,
@@ -525,7 +732,8 @@ class ChatService: ObservableObject {
             print("📝 Creating new conversation: \(conversationId)")
             let conversationData: [String: Any] = [
                 "type": type.rawValue,
-                "participantIds": participantIds,
+                "participantIds": sortedIds,
+                "participantMap": participantMap,
                 "createdAt": ServerValue.timestamp(),
                 "lastMessageAt": ServerValue.timestamp()
             ]
@@ -534,7 +742,7 @@ class ChatService: ObservableObject {
             let optimisticConversation = Conversation(
                 id: conversationId,
                 type: .direct,
-                participantIds: participantIds,
+                participantIds: sortedIds,
                 lastMessageText: nil,
                 lastMessageAt: Date(),
                 groupName: nil,
@@ -556,13 +764,22 @@ class ChatService: ObservableObject {
         let conversationRef = db.child("conversations").child(conversationId)
         
         print("📝 Creating new group conversation: \(conversationId)")
-        let conversationData: [String: Any] = [
+        let participantMap = buildParticipantMap(from: participantIds)
+        
+        // For groups, set the owner and make them the first admin
+        var conversationData: [String: Any] = [
             "type": type.rawValue,
             "participantIds": participantIds,
+            "participantMap": participantMap,
             "groupName": groupName as Any,
             "createdAt": ServerValue.timestamp(),
             "lastMessageAt": ServerValue.timestamp()
         ]
+        
+        if let ownerId = ownerId {
+            conversationData["ownerId"] = ownerId
+            conversationData["adminIds"] = [ownerId] // Owner is the first admin
+        }
         
         // Optimistically add to local array immediately
         let optimisticConversation = Conversation(
@@ -573,6 +790,8 @@ class ChatService: ObservableObject {
             lastMessageAt: Date(),
             groupName: groupName,
             groupAvatarURL: nil,
+            ownerId: ownerId,
+            adminIds: ownerId != nil ? [ownerId!] : nil,
             createdAt: Date()
         )
         conversations.insert(optimisticConversation, at: 0)
@@ -580,7 +799,7 @@ class ChatService: ObservableObject {
         
         // Write to database (will be confirmed by listener)
         try await conversationRef.setValue(conversationData)
-        print("✅ Group conversation created in database")
+        print("✅ Group conversation created in database with owner: \(ownerId ?? "none")")
         
         return conversationId
     }
@@ -736,13 +955,10 @@ class ChatService: ObservableObject {
                 throw NSError(domain: "ChatService", code: 403, userInfo: [NSLocalizedDescriptionKey: "Only the sender can delete for everyone"])
             }
 
-            try await messageRef.updateChildValues([
-                            "text": "[Message deleted]",
-                            "deletedForEveryone": true,
-                "deletedBy": [currentUserId]
-                        ])
+            // Completely remove the message from the database
+            try await messageRef.removeValue()
 
-            print("✅ Message deleted for everyone")
+            print("✅ Message deleted for everyone (removed from database)")
                     } else {
             // Mark as deleted for current user only
             var deletedBy = messageData["deletedBy"] as? [String] ?? []
@@ -755,18 +971,28 @@ class ChatService: ObservableObject {
             print("✅ Message marked as deleted for current user")
         }
         
+        // Delete from local storage if needed
+        if deleteForEveryone {
+            try? LocalStorageService.shared.deleteMessage(messageId: messageId)
+        }
+
         // Update local cache
         await MainActor.run {
             if var conversationMessages = messages[conversationId],
                let index = conversationMessages.firstIndex(where: { $0.id == messageId }) {
-                var updatedMessage = conversationMessages[index]
                 if deleteForEveryone {
-                    updatedMessage.text = "[Message deleted]"
-                    updatedMessage.deletedForEveryone = true
+                    // Remove the message completely from local cache
+                    conversationMessages.remove(at: index)
+                    messages[conversationId] = conversationMessages
+                    messageCache[conversationId] = conversationMessages
+                    lastMessageCount[conversationId] = conversationMessages.count
+                } else {
+                    // Just mark as deleted for current user
+                    var updatedMessage = conversationMessages[index]
+                    updatedMessage.deletedBy = (updatedMessage.deletedBy ?? []) + [currentUserId]
+                    conversationMessages[index] = updatedMessage
+                    messages[conversationId] = conversationMessages
                 }
-                updatedMessage.deletedBy = (updatedMessage.deletedBy ?? []) + [currentUserId]
-                conversationMessages[index] = updatedMessage
-                messages[conversationId] = conversationMessages
             }
         }
     }
@@ -917,49 +1143,67 @@ class ChatService: ObservableObject {
     }
 
     func clearChatHistory(conversationId: String) async throws {
+        guard let currentUserId = AuthService.shared.currentUser?.id else {
+            throw NSError(domain: "ChatService", code: 401, userInfo: [NSLocalizedDescriptionKey: "User not authenticated"])
+        }
+
         print("🗑️ Clearing chat history for conversation: \(conversationId)")
-        
-        // Delete local messages only
+
+        // Save clear timestamp to Firebase (persists across devices)
+        let clearTimestamp = Date().timeIntervalSince1970 * 1000 // milliseconds
+        try await db.child("conversations")
+            .child(conversationId)
+            .child("participantSettings")
+            .child(currentUserId)
+            .child("clearedAt")
+            .setValue(clearTimestamp)
+
+        // Delete local messages
         try LocalStorageService.shared.deleteMessages(for: conversationId)
-        
+
         // Clear from memory
         await MainActor.run {
             messages[conversationId] = []
             messageCache[conversationId] = []
+            lastMessageCount[conversationId] = 0
         }
-        
-        print("✅ Chat history cleared locally")
+
+        print("✅ Chat history cleared permanently for user: \(currentUserId)")
     }
     
     func deleteConversation(conversationId: String) async throws {
-        print("🗑️ Deleting conversation: \(conversationId)")
-        
+        guard let currentUserId = AuthService.shared.currentUser?.id else {
+            throw NSError(domain: "ChatService", code: 401, userInfo: [NSLocalizedDescriptionKey: "User not authenticated"])
+        }
+
+        print("🗑️ Deleting conversation for user: \(currentUserId)")
+
         // Stop listening
         stopObservingMessages(conversationId: conversationId)
-        
-        // Delete all messages
+
+        // First, clear chat history (hides messages)
+        try await clearChatHistory(conversationId: conversationId)
+
+        // Mark conversation as deleted for current user (persists across devices)
         try await db.child("conversations")
             .child(conversationId)
-            .child("messages")
-            .removeValue()
-        
-        // Delete conversation
-        try await db.child("conversations")
-            .child(conversationId)
-            .removeValue()
-        
-        // Update local state
+            .child("participantSettings")
+            .child(currentUserId)
+            .child("deletedAt")
+            .setValue(Date().timeIntervalSince1970 * 1000)
+
+        // Update local state - remove from UI
         await MainActor.run {
             conversations.removeAll { $0.id == conversationId }
             messages.removeValue(forKey: conversationId)
             messageCache.removeValue(forKey: conversationId)
         }
-        
+
         // Clear local storage
         try LocalStorageService.shared.deleteMessages(for: conversationId)
         try LocalStorageService.shared.deleteConversation(id: conversationId)
-        
-        print("✅ Conversation deleted successfully")
+
+        print("✅ Conversation deleted for current user (messages and conversation hidden)")
     }
     
     func pinMessage(conversationId: String, messageId: String, userId: String) async throws {
@@ -1061,17 +1305,36 @@ class ChatService: ObservableObject {
             print("⚠️ Already loading more messages")
             return
         }
-        
+
         guard hasMoreMessages[conversationId] != false else {
             print("📭 No more messages to load")
             return
         }
-        
+
         await MainActor.run {
             isLoadingMoreMessages[conversationId] = true
         }
-        
+
         do {
+            // Get clearedAt timestamp for current user
+            var clearedAt: TimeInterval = 0
+            if let currentUserId = AuthService.shared.currentUser?.id {
+                do {
+                    let clearedSnapshot = try await db.child("conversations")
+                        .child(conversationId)
+                        .child("participantSettings")
+                        .child(currentUserId)
+                        .child("clearedAt")
+                        .getData()
+
+                    if let timestamp = clearedSnapshot.value as? TimeInterval {
+                        clearedAt = timestamp
+                    }
+                } catch {
+                    // No clearedAt timestamp exists
+                }
+            }
+
             let currentMessages = await MainActor.run { messages[conversationId] ?? [] }
             guard let oldestMessage = currentMessages.first else {
                 await MainActor.run {
@@ -1080,9 +1343,22 @@ class ChatService: ObservableObject {
                 }
                 return
             }
-            
+
+            // If the oldest message is at or before clearedAt, don't load more
+            if clearedAt > 0 {
+                let oldestTimestamp = oldestMessage.createdAt.timeIntervalSince1970 * 1000
+                if oldestTimestamp <= clearedAt {
+                    print("📋 No more messages to load (reached clear point)")
+                    await MainActor.run {
+                        isLoadingMoreMessages[conversationId] = false
+                        hasMoreMessages[conversationId] = false
+                    }
+                    return
+                }
+            }
+
             print("📥 Loading messages before \(oldestMessage.createdAt)")
-            
+
             // Query for older messages (before oldest)
             let snapshot = try await db.child("conversations")
                 .child(conversationId)
@@ -1091,7 +1367,7 @@ class ChatService: ObservableObject {
                 .queryEnding(atValue: oldestMessage.createdAt.timeIntervalSince1970 * 1000)
                 .queryLimited(toLast: UInt(messagesPerPage))
                 .getData()
-            
+
             guard let messagesDict = snapshot.value as? [String: [String: Any]] else {
                 await MainActor.run {
                     isLoadingMoreMessages[conversationId] = false
@@ -1099,8 +1375,8 @@ class ChatService: ObservableObject {
                 }
                 return
             }
-            
-            let olderMessages = messagesDict.compactMap { (msgId, data) -> Message? in
+
+            let allOlderMessages = messagesDict.compactMap { (msgId, data) -> Message? in
                 Message(
                     id: msgId,
                     conversationId: conversationId,
@@ -1112,6 +1388,17 @@ class ChatService: ObservableObject {
                     readBy: data["readBy"] as? [String] ?? []
                 )
             }.filter { $0.id != oldestMessage.id } // Exclude the pivot message
+
+            // Filter based on clearedAt timestamp
+            let olderMessages: [Message]
+            if clearedAt > 0 {
+                olderMessages = allOlderMessages.filter { message in
+                    let messageTimestamp = message.createdAt.timeIntervalSince1970 * 1000
+                    return messageTimestamp > clearedAt
+                }
+            } else {
+                olderMessages = allOlderMessages
+            }
             
             print("✅ Loaded \(olderMessages.count) older messages")
             
@@ -1551,26 +1838,63 @@ class ChatService: ObservableObject {
             throw NSError(domain: "ChatService", code: 404, userInfo: [NSLocalizedDescriptionKey: "Conversation not found"])
         }
 
+        // Check if user is the owner
+        let ownerId = convData["ownerId"] as? String
+        if ownerId == userId {
+            throw NSError(domain: "ChatService", code: 403, userInfo: [NSLocalizedDescriptionKey: "Group owner cannot leave. Delete the group instead."])
+        }
+
         let adminIds = convData["adminIds"] as? [String] ?? []
         
-        // Check if last admin
-        if adminIds.contains(userId) && adminIds.count <= 1 {
-            throw NSError(domain: "ChatService", code: 400, userInfo: [NSLocalizedDescriptionKey: "Cannot leave: you are the last admin"])
-        }
-        
         // Remove from participants and admins
-        var participantIds = convData["participantIds"] as? [String] ?? []
+        var participantIds = extractParticipantIds(from: convData)
         participantIds.removeAll { $0 == userId }
         
         var newAdminIds = adminIds
         newAdminIds.removeAll { $0 == userId }
         
-        try await conversationRef.updateChildValues([
+        var updates: [String: Any] = [
             "participantIds": participantIds,
-            "adminIds": newAdminIds
-        ])
+            "adminIds": newAdminIds,
+            "participantMap/\(userId)": NSNull()
+        ]
+        
+        try await conversationRef.updateChildValues(updates)
         
         print("✅ Left group")
+    }
+    
+    func deleteGroup(conversationId: String, userId: String) async throws {
+        print("🗑️ Deleting group")
+
+        let conversationRef = db.child("conversations").child(conversationId)
+
+        // Get conversation
+        let snapshot = try await conversationRef.getData()
+        guard let convData = snapshot.value as? [String: Any] else {
+            throw NSError(domain: "ChatService", code: 404, userInfo: [NSLocalizedDescriptionKey: "Conversation not found"])
+        }
+
+        // Verify user is the owner
+        let ownerId = convData["ownerId"] as? String
+        guard ownerId == userId else {
+            throw NSError(domain: "ChatService", code: 403, userInfo: [NSLocalizedDescriptionKey: "Only the group owner can delete the group"])
+        }
+        
+        // Delete all messages in this conversation
+        let messagesRef = db.child("conversations").child(conversationId).child("messages")
+        try await messagesRef.removeValue()
+        
+        // Delete the conversation itself
+        try await conversationRef.removeValue()
+        
+        // Remove from local array
+        await MainActor.run {
+            conversations.removeAll { $0.id == conversationId }
+            messages.removeValue(forKey: conversationId)
+        }
+        
+        print("✅ Group deleted successfully")
     }
     
     func makeAdmin(conversationId: String, userId: String, currentAdminId: String) async throws {
@@ -1642,16 +1966,19 @@ class ChatService: ObservableObject {
         }
         
         // Remove from participants and admins
-        var participantIds = convData["participantIds"] as? [String] ?? []
+        var participantIds = extractParticipantIds(from: convData)
         participantIds.removeAll { $0 == userId }
         
         var newAdminIds = adminIds
         newAdminIds.removeAll { $0 == userId }
         
-        try await conversationRef.updateChildValues([
+        var updates: [String: Any] = [
             "participantIds": participantIds,
-            "adminIds": newAdminIds
-        ])
+            "adminIds": newAdminIds,
+            "participantMap/\(userId)": NSNull()
+        ]
+        
+        try await conversationRef.updateChildValues(updates)
         
         print("✅ Participant removed")
     }
@@ -1673,14 +2000,21 @@ class ChatService: ObservableObject {
         }
         
         // Add to participants
-        var participantIds = convData["participantIds"] as? [String] ?? []
+        var participantIds = extractParticipantIds(from: convData)
+        var mapUpdates: [String: Any] = [:]
         for userId in userIds {
             if !participantIds.contains(userId) {
                 participantIds.append(userId)
             }
+            mapUpdates["participantMap/\(userId)"] = true
         }
         
-        try await conversationRef.child("participantIds").setValue(participantIds)
+        var updates: [String: Any] = ["participantIds": participantIds]
+        for (key, value) in mapUpdates {
+            updates[key] = value
+        }
+        
+        try await conversationRef.updateChildValues(updates)
         print("✅ Added \(userIds.count) participant(s)")
     }
     

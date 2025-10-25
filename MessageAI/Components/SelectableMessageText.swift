@@ -13,6 +13,10 @@ struct SelectableMessageText: UIViewRepresentable {
     let isFromCurrentUser: Bool
     let onSummarize: (String) -> Void
     
+    func makeCoordinator() -> Coordinator {
+        Coordinator()
+    }
+    
     func makeUIView(context: Context) -> UITextView {
         let textView = CustomMenuTextView()
         textView.backgroundColor = .clear
@@ -21,8 +25,13 @@ struct SelectableMessageText: UIViewRepresentable {
         textView.isScrollEnabled = false
         textView.textContainerInset = UIEdgeInsets(top: 8, left: 12, bottom: 8, right: 12)
         textView.textContainer.lineFragmentPadding = 0
+        textView.textContainer.lineBreakMode = .byWordWrapping
+        textView.textContainer.widthTracksTextView = true
+        textView.textContainer.maximumNumberOfLines = 0 // No line limit
         textView.font = .systemFont(ofSize: 17)
         textView.dataDetectorTypes = [.link, .phoneNumber, .address]
+        textView.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        textView.setContentHuggingPriority(.defaultHigh, for: .vertical)
         
         // Set text color based on sender
         textView.textColor = isFromCurrentUser ? .white : .label
@@ -37,6 +46,9 @@ struct SelectableMessageText: UIViewRepresentable {
     }
     
     func updateUIView(_ uiView: UITextView, context: Context) {
+        // Only update if text actually changed to avoid layout loops
+        guard uiView.text != text else { return }
+        
         uiView.text = text
         uiView.textColor = isFromCurrentUser ? .white : .label
         uiView.tintColor = isFromCurrentUser ? .white : .systemBlue
@@ -45,12 +57,43 @@ struct SelectableMessageText: UIViewRepresentable {
             customTextView.onSummarize = onSummarize
         }
     }
+    
+    class Coordinator {
+        // Coordinator to manage text view state
+    }
 }
 
 // MARK: - Custom UITextView with Menu Customization
 
 class CustomMenuTextView: UITextView {
     var onSummarize: ((String) -> Void)?
+    
+    override var intrinsicContentSize: CGSize {
+        // Calculate the size needed to display all text
+        let textWidth = bounds.width > 0 ? bounds.width : 300 // Fallback width
+        let size = sizeThatFits(CGSize(width: textWidth, height: .greatestFiniteMagnitude))
+        return CGSize(width: UIView.noIntrinsicMetric, height: ceil(size.height))
+    }
+    
+    override var text: String! {
+        didSet {
+            invalidateIntrinsicContentSize()
+            setNeedsLayout()
+        }
+    }
+    
+    override var bounds: CGRect {
+        didSet {
+            if bounds.width != oldValue.width {
+                invalidateIntrinsicContentSize()
+            }
+        }
+    }
+    
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        invalidateIntrinsicContentSize()
+    }
     
     override func canPerformAction(_ action: Selector, withSender sender: Any?) -> Bool {
         // Add our custom action to the menu

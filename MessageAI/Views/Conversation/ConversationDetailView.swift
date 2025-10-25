@@ -39,7 +39,12 @@ struct ConversationDetailView: View {
     @State private var translatedText: String?
     @State private var targetLanguage = "en"
     @State private var showTranslationSettings = false
-    
+
+    // Message Summarization
+    @State private var showSummarizeSheet = false
+    @State private var selectedMessageForSummarization: Message?
+    @State private var summarizedText: String?
+
     // Text Selection Summarization
     @State private var showTextSummarySheet = false
     @State private var selectedTextToSummarize: String?
@@ -237,6 +242,9 @@ struct ConversationDetailView: View {
         }
         .sheet(isPresented: $showTranslateSheet) {
             translateSheet
+        }
+        .sheet(isPresented: $showSummarizeSheet) {
+            summarizeSheet
         }
         .sheet(isPresented: $showTranslationSettings) {
             OpenAISettingsView()
@@ -567,7 +575,93 @@ struct ConversationDetailView: View {
         }
         .presentationDetents([.large])
     }
-    
+
+    private var summarizeSheet: some View {
+        NavigationStack {
+            VStack(spacing: 20) {
+                if let message = selectedMessageForSummarization {
+                    // Original text
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Message")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+
+                        ScrollView {
+                            Text(message.text)
+                                .font(.body)
+                                .padding()
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .background(Color(.systemGray6))
+                                .cornerRadius(8)
+                                .textSelection(.enabled)
+                        }
+                        .frame(maxHeight: 200)
+                    }
+
+                    // Summarize button
+                    Button {
+                        Task { await summarizeMessage(message: message) }
+                    } label: {
+                        HStack {
+                            if isLoadingAI {
+                                ProgressView()
+                                    .padding(.trailing, 8)
+                            }
+                            Image(systemName: "sparkles")
+                            Text(isLoadingAI ? "Summarizing..." : "Summarize")
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding()
+                        .background(Color.purple)
+                        .foregroundStyle(.white)
+                        .cornerRadius(10)
+                    }
+                    .disabled(isLoadingAI)
+
+                    #if canImport(FoundationModels)
+                    if #available(iOS 26.0, *) {
+                        FoundationModelsStatusView()
+                    }
+                    #endif
+
+                    // Summarized text
+                    if let summary = summarizedText {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Summary")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+
+                            ScrollView {
+                                Text(summary)
+                                    .font(.body)
+                                    .padding()
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .background(Color.purple.opacity(0.1))
+                                    .cornerRadius(8)
+                                    .textSelection(.enabled)
+                            }
+                            .frame(maxHeight: 300)
+                        }
+                    }
+
+                    Spacer()
+                }
+            }
+            .padding()
+            .navigationTitle("Summarize Message")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Close") {
+                        showSummarizeSheet = false
+                        summarizedText = nil
+                    }
+                }
+            }
+        }
+        .presentationDetents([.large])
+    }
+
     private var textSummarySheet: some View {
         NavigationStack {
             VStack(spacing: 20) {
@@ -690,7 +784,17 @@ struct ConversationDetailView: View {
         } label: {
             Label("Translate", systemImage: "globe")
         }
-        
+
+        // Summarize option (available for all messages with text)
+        if !message.text.isEmpty {
+            Button {
+                selectedMessageForSummarization = message
+                showSummarizeSheet = true
+            } label: {
+                Label("Summarize", systemImage: "sparkles")
+            }
+        }
+
         // React option
         Button {
             reactionMessageId = message.id
@@ -1180,6 +1284,59 @@ struct ConversationDetailView: View {
         }
     }
 
+    private func summarizeMessage(message: Message) async {
+        isLoadingAI = true
+        defer { isLoadingAI = false }
+
+        do {
+            print("✨ Summarizing message (\(message.text.count) characters)...")
+
+            // Try using Foundation Models for on-device summarization first
+            #if canImport(FoundationModels)
+            if #available(iOS 26.0, *) {
+                if let onDeviceSummary = try await summarizeWithFoundationModels(text: message.text) {
+                    await MainActor.run {
+                        summarizedText = onDeviceSummary
+                        aiError = nil
+                        print("✅ Summarization completed using Foundation Models")
+                    }
+                    return
+                }
+            }
+            #endif
+
+            // Fallback: Use the server-based summarization
+            // Create a temporary message for the inference manager
+            let tempMessage = Message(
+                id: UUID().uuidString,
+                conversationId: conversation.id,
+                senderId: "temp",
+                text: message.text,
+                createdAt: Date()
+            )
+
+            let result = try await inferenceManager.summarize(
+                convId: conversation.id,
+                messages: [tempMessage],
+                window: "all",
+                style: "bullets"
+            )
+
+            await MainActor.run {
+                summarizedText = result.summary
+                aiError = nil
+                print("✅ Summarization completed using \(result.model)")
+            }
+        } catch {
+            print("❌ Summarization error: \(error.localizedDescription)")
+            await MainActor.run {
+                aiError = error.localizedDescription
+                errorMessage = "Summarization failed: \(error.localizedDescription)"
+                showErrorAlert = true
+            }
+        }
+    }
+
     @ViewBuilder
     private func actionItemCard(_ action: AIAction) -> some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -1355,9 +1512,9 @@ struct MessageBubbleRow: View {
     
     var body: some View {
         VStack(alignment: isFromCurrentUser ? .trailing : .leading, spacing: 4) {
-            HStack {
+            HStack(alignment: .bottom, spacing: 0) {
             if isFromCurrentUser {
-                    Spacer()
+                    Spacer(minLength: 60)
                     messageBubble
                         .background(Color.blue)
                         .foregroundStyle(.white)
@@ -1365,15 +1522,17 @@ struct MessageBubbleRow: View {
                     messageBubble
                         .background(Color(.systemGray5))
                         .foregroundStyle(.primary)
-                    Spacer()
+                    Spacer(minLength: 60)
                 }
             }
+            .frame(maxWidth: .infinity, alignment: isFromCurrentUser ? .trailing : .leading)
             
             // Reactions
             if let reactions = message.reactions, !reactions.isEmpty {
                 reactionsView(reactions)
             }
         }
+        .frame(maxWidth: .infinity)
     }
     
     private var messageBubble: some View {
@@ -1413,6 +1572,7 @@ struct MessageBubbleRow: View {
                     }
         .background(isFromCurrentUser ? Color.blue : Color(.systemGray5))
         .cornerRadius(16)
+        .frame(maxWidth: UIScreen.main.bounds.width * 0.75, alignment: isFromCurrentUser ? .trailing : .leading)
     }
     
     @ViewBuilder

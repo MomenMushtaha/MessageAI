@@ -76,6 +76,7 @@ Config.xcconfig
 *.mobileprovision
 credentials.json
 auth.json
+serviceAccountKey.json
 
 # Firebase
 .firebaserc

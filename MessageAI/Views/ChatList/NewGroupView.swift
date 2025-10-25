@@ -386,7 +386,8 @@ struct GroupDetailsView: View {
             let conversationId = try await chatService.createOrGetConversation(
                 participantIds: participantIds,
                 type: .group,
-                groupName: groupName.trimmingCharacters(in: .whitespacesAndNewlines)
+                groupName: groupName.trimmingCharacters(in: .whitespacesAndNewlines),
+                ownerId: currentUserId
             )
 
             print("✅ Group created: \(conversationId)")

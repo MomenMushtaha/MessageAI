@@ -15,7 +15,9 @@ struct EditProfileView: View {
     @State private var displayName: String
     @State private var bio: String
     @State private var selectedPhotoItem: PhotosPickerItem?
+    @State private var selectedAvatarImage: UIImage?
     @State private var isSaving = false
+    @State private var isUploadingAvatar = false
     @State private var showErrorAlert = false
     @State private var errorMessage = ""
     @State private var showReadReceipts: Bool
@@ -49,23 +51,76 @@ struct EditProfileView: View {
                         Spacer()
 
                         VStack(spacing: 16) {
-                            Circle()
-                                .fill(Color.blue.gradient)
-                                .frame(width: 100, height: 100)
-                                .overlay {
-                                    Text(authService.currentUser?.initials ?? "")
-                                        .font(.system(size: 40, weight: .medium))
-                                        .foregroundStyle(.white)
+                            // Avatar display
+                            ZStack {
+                                if let selectedImage = selectedAvatarImage {
+                                    // Show newly selected image
+                                    Image(uiImage: selectedImage)
+                                        .resizable()
+                                        .scaledToFill()
+                                        .frame(width: 100, height: 100)
+                                        .clipShape(Circle())
+                                } else if let avatarURL = authService.currentUser?.avatarURL,
+                                          !avatarURL.isEmpty {
+                                    // Show existing avatar from URL
+                                    AsyncImage(url: URL(string: avatarURL)) { phase in
+                                        switch phase {
+                                        case .success(let image):
+                                            image
+                                                .resizable()
+                                                .scaledToFill()
+                                                .frame(width: 100, height: 100)
+                                                .clipShape(Circle())
+                                        case .failure(_), .empty:
+                                            // Fallback to initials
+                                            Circle()
+                                                .fill(Color.blue.gradient)
+                                                .frame(width: 100, height: 100)
+                                                .overlay {
+                                                    Text(authService.currentUser?.initials ?? "")
+                                                        .font(.system(size: 40, weight: .medium))
+                                                        .foregroundStyle(.white)
+                                                }
+                                        @unknown default:
+                                            Circle()
+                                                .fill(Color.blue.gradient)
+                                                .frame(width: 100, height: 100)
+                                        }
+                                    }
+                                } else {
+                                    // Show initials
+                                    Circle()
+                                        .fill(Color.blue.gradient)
+                                        .frame(width: 100, height: 100)
+                                        .overlay {
+                                            Text(authService.currentUser?.initials ?? "")
+                                                .font(.system(size: 40, weight: .medium))
+                                                .foregroundStyle(.white)
+                                        }
                                 }
 
-                            PhotosPicker(selection: $selectedPhotoItem, matching: .images) {
-                                Text("Change Photo")
-                                    .font(.subheadline)
-                                    .foregroundStyle(.blue)
+                                // Loading overlay
+                                if isUploadingAvatar {
+                                    Circle()
+                                        .fill(Color.black.opacity(0.5))
+                                        .frame(width: 100, height: 100)
+                                        .overlay {
+                                            ProgressView()
+                                                .tint(.white)
+                                        }
+                                }
                             }
-                            .onChange(of: selectedPhotoItem) { _, _ in
-                                // Photo upload would be implemented here
-                                // TODO: Wire up MediaService to upload avatars to S3
+
+                            PhotosPicker(selection: $selectedPhotoItem, matching: .images) {
+                                Text(isUploadingAvatar ? "Uploading..." : "Change Photo")
+                                    .font(.subheadline)
+                                    .foregroundStyle(isUploadingAvatar ? .gray : .blue)
+                            }
+                            .disabled(isUploadingAvatar)
+                            .onChange(of: selectedPhotoItem) { _, newItem in
+                                Task {
+                                    await handleAvatarSelection(newItem)
+                                }
                             }
                         }
 
@@ -204,6 +259,41 @@ struct EditProfileView: View {
         } catch {
             errorMessage = error.localizedDescription
             showErrorAlert = true
+        }
+    }
+
+    private func handleAvatarSelection(_ item: PhotosPickerItem?) async {
+        guard let item = item, let userId = authService.currentUser?.id else { return }
+
+        isUploadingAvatar = true
+        defer { isUploadingAvatar = false }
+
+        do {
+            // Load the image data from the photo picker
+            guard let imageData = try await item.loadTransferable(type: Data.self),
+                  let image = UIImage(data: imageData) else {
+                await MainActor.run {
+                    errorMessage = "Failed to load image"
+                    showErrorAlert = true
+                }
+                return
+            }
+
+            // Show the selected image immediately for preview
+            await MainActor.run {
+                selectedAvatarImage = image
+            }
+
+            // Upload the avatar to S3 and update user profile
+            try await authService.updateUserAvatar(userId: userId, image: image)
+
+            print("✅ Profile photo updated successfully")
+        } catch {
+            await MainActor.run {
+                errorMessage = "Failed to upload photo: \(error.localizedDescription)"
+                showErrorAlert = true
+                selectedAvatarImage = nil // Clear the preview on error
+            }
         }
     }
 }

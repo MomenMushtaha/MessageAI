@@ -19,4 +19,16 @@ enum AppConfig {
         }
         return nil
     }
+    
+    // MoChain AI Assistant endpoint
+    // Example: https://us-central1-your-project.cloudfunctions.net/mochainChat
+    static var mochainChatEndpoint: String? {
+        if let value = Bundle.main.object(forInfoDictionaryKey: "MOCHAIN_CHAT_ENDPOINT") as? String, !value.isEmpty {
+            return value
+        }
+        if let env = ProcessInfo.processInfo.environment["MOCHAIN_CHAT_ENDPOINT"], !env.isEmpty {
+            return env
+        }
+        return nil
+    }
 }

@@ -16,18 +16,24 @@ final class LocalConversation {
     var lastMessageText: String?
     var lastMessageAt: Date?
     var groupName: String?
+    var groupDescription: String?
     var groupAvatarURL: String?
+    var ownerId: String? // Group owner ID
+    var adminIds: [String]? // Group admin IDs
     var createdAt: Date
     var isSynced: Bool
     
-    init(id: String, type: String, participantIds: [String], lastMessageText: String? = nil, lastMessageAt: Date? = nil, groupName: String? = nil, groupAvatarURL: String? = nil, createdAt: Date, isSynced: Bool = false) {
+    init(id: String, type: String, participantIds: [String], lastMessageText: String? = nil, lastMessageAt: Date? = nil, groupName: String? = nil, groupDescription: String? = nil, groupAvatarURL: String? = nil, ownerId: String? = nil, adminIds: [String]? = nil, createdAt: Date, isSynced: Bool = false) {
         self.id = id
         self.type = type
         self.participantIds = participantIds
         self.lastMessageText = lastMessageText
         self.lastMessageAt = lastMessageAt
         self.groupName = groupName
+        self.groupDescription = groupDescription
         self.groupAvatarURL = groupAvatarURL
+        self.ownerId = ownerId
+        self.adminIds = adminIds
         self.createdAt = createdAt
         self.isSynced = isSynced
     }
@@ -41,7 +47,10 @@ final class LocalConversation {
             lastMessageText: conversation.lastMessageText,
             lastMessageAt: conversation.lastMessageAt,
             groupName: conversation.groupName,
+            groupDescription: conversation.groupDescription,
             groupAvatarURL: conversation.groupAvatarURL,
+            ownerId: conversation.ownerId,
+            adminIds: conversation.adminIds,
             createdAt: conversation.createdAt,
             isSynced: isSynced
         )
@@ -56,7 +65,10 @@ final class LocalConversation {
             lastMessageText: lastMessageText,
             lastMessageAt: lastMessageAt,
             groupName: groupName,
+            groupDescription: groupDescription,
             groupAvatarURL: groupAvatarURL,
+            ownerId: ownerId,
+            adminIds: adminIds,
             createdAt: createdAt
         )
     }

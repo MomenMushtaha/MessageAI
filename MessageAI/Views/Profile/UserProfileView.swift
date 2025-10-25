@@ -27,14 +27,43 @@ struct UserProfileView: View {
                 VStack(spacing: 24) {
                     // Avatar Section
                     VStack(spacing: 16) {
-                        Circle()
-                            .fill(Color.blue.gradient)
-                            .frame(width: 120, height: 120)
-                            .overlay {
-                                Text(user.initials)
-                                    .font(.system(size: 48, weight: .medium))
-                                    .foregroundStyle(.white)
+                        // Avatar display
+                        if let avatarURL = user.avatarURL, !avatarURL.isEmpty {
+                            AsyncImage(url: URL(string: avatarURL)) { phase in
+                                switch phase {
+                                case .success(let image):
+                                    image
+                                        .resizable()
+                                        .scaledToFill()
+                                        .frame(width: 120, height: 120)
+                                        .clipShape(Circle())
+                                case .failure(_), .empty:
+                                    // Fallback to initials
+                                    Circle()
+                                        .fill(Color.blue.gradient)
+                                        .frame(width: 120, height: 120)
+                                        .overlay {
+                                            Text(user.initials)
+                                                .font(.system(size: 48, weight: .medium))
+                                                .foregroundStyle(.white)
+                                        }
+                                @unknown default:
+                                    Circle()
+                                        .fill(Color.blue.gradient)
+                                        .frame(width: 120, height: 120)
+                                }
                             }
+                        } else {
+                            // Show initials if no avatar
+                            Circle()
+                                .fill(Color.blue.gradient)
+                                .frame(width: 120, height: 120)
+                                .overlay {
+                                    Text(user.initials)
+                                        .font(.system(size: 48, weight: .medium))
+                                        .foregroundStyle(.white)
+                                }
+                        }
 
                         VStack(spacing: 4) {
                             Text(user.displayName)

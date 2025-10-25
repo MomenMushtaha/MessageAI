@@ -7,6 +7,8 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		A50F52B32EAC781500D6674A /* Config.xcconfig in Resources */ = {isa = PBXBuildFile; fileRef = A50F52AF2EAC781500D6674A /* Config.xcconfig */; };
+		A50F52B42EAC781500D6674A /* GoogleService-Info.plist in Resources */ = {isa = PBXBuildFile; fileRef = A50F52B02EAC781500D6674A /* GoogleService-Info.plist */; };
 		A52EBF5F2EA85C3D008D65D8 /* FirebaseAuth in Frameworks */ = {isa = PBXBuildFile; productRef = A5FB00012EA8300000000001 /* FirebaseAuth */; };
 		A52EBF602EA85C3D008D65D8 /* FirebaseDatabase in Frameworks */ = {isa = PBXBuildFile; productRef = A5FB00022EA8300000000002 /* FirebaseDatabase */; };
 		A52EBF612EA85C3D008D65D8 /* FirebaseMessaging in Frameworks */ = {isa = PBXBuildFile; productRef = A5FB00042EA8300000000004 /* FirebaseMessaging */; };
@@ -36,6 +38,9 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		A50F52AF2EAC781500D6674A /* Config.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Config.xcconfig; sourceTree = "<group>"; };
+		A50F52B02EAC781500D6674A /* GoogleService-Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = "GoogleService-Info.plist"; sourceTree = "<group>"; };
+		A50F52B12EAC781500D6674A /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		A5B11F672EA829030048396F /* MessageAI.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = MessageAI.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		A5B11F762EA829040048396F /* MessageAITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = MessageAITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		A5B11F802EA829040048396F /* MessageAIUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = MessageAIUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -103,6 +108,9 @@
 		A5B11F5E2EA829030048396F = {
 			isa = PBXGroup;
 			children = (
+				A50F52AF2EAC781500D6674A /* Config.xcconfig */,
+				A50F52B02EAC781500D6674A /* GoogleService-Info.plist */,
+				A50F52B12EAC781500D6674A /* Info.plist */,
 				A5B308D12EABF2DE0046A2FE /* firebase.json */,
 				A5B11F692EA829030048396F /* MessageAI */,
 				A5B11F792EA829040048396F /* MessageAITests */,
@@ -256,6 +264,8 @@
 				A5B11FA02EA82D640048396F /* README.md in Resources */,
 				A5B11FA22EA82D6B0048396F /* .gitignore in Resources */,
 				A5B3622A2EABF2DE0046A2FE /* firebase.json in Resources */,
+				A50F52B32EAC781500D6674A /* Config.xcconfig in Resources */,
+				A50F52B42EAC781500D6674A /* GoogleService-Info.plist in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

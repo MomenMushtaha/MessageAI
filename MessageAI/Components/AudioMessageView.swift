@@ -81,7 +81,7 @@ struct AudioMessageView: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
-        .frame(minWidth: 200)
+        .frame(minWidth: 200, maxWidth: .infinity)
         .background(backgroundColor)
         .cornerRadius(16)
         .onAppear {

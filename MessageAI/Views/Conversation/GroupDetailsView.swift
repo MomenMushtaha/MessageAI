@@ -21,6 +21,7 @@ struct GroupSettingsView: View {
     @State private var editedGroupDescription: String
     @State private var showAddParticipants = false
     @State private var showLeaveConfirmation = false
+    @State private var showDeleteConfirmation = false
     @State private var showErrorAlert = false
     @State private var errorMessage = ""
     @State private var isSaving = false
@@ -37,6 +38,11 @@ struct GroupSettingsView: View {
     private var isCurrentUserAdmin: Bool {
         guard let currentUserId = authService.currentUser?.id else { return false }
         return conversation.isAdmin(currentUserId)
+    }
+    
+    private var isCurrentUserOwner: Bool {
+        guard let currentUserId = authService.currentUser?.id else { return false }
+        return conversation.isOwner(currentUserId)
     }
 
     var body: some View {
@@ -183,6 +189,7 @@ struct GroupSettingsView: View {
                         ParticipantRow(
                             participantId: participantId,
                             user: participantUsers[participantId],
+                            isOwner: conversation.isOwner(participantId),
                             isAdmin: conversation.isAdmin(participantId),
                             isCurrentUserAdmin: isCurrentUserAdmin,
                             isCurrentUser: participantId == authService.currentUser?.id,
@@ -323,12 +330,24 @@ struct GroupSettingsView: View {
                         }
                     }
 
-                    Button(role: .destructive) {
-                        showLeaveConfirmation = true
-                    } label: {
-                        HStack {
-                            Image(systemName: "rectangle.portrait.and.arrow.right")
-                            Text("Leave Group")
+                    // Show different options based on ownership
+                    if isCurrentUserOwner {
+                        Button(role: .destructive) {
+                            showDeleteConfirmation = true
+                        } label: {
+                            HStack {
+                                Image(systemName: "trash.fill")
+                                Text("Delete Group")
+                            }
+                        }
+                    } else {
+                        Button(role: .destructive) {
+                            showLeaveConfirmation = true
+                        } label: {
+                            HStack {
+                                Image(systemName: "rectangle.portrait.and.arrow.right")
+                                Text("Leave Group")
+                            }
                         }
                     }
                 }
@@ -356,6 +375,16 @@ struct GroupSettingsView: View {
                 Button("Cancel", role: .cancel) { }
             } message: {
                 Text("Are you sure you want to leave this group?")
+            }
+            .confirmationDialog("Delete Group", isPresented: $showDeleteConfirmation) {
+                Button("Delete Group for Everyone", role: .destructive) {
+                    Task {
+                        await deleteGroup()
+                    }
+                }
+                Button("Cancel", role: .cancel) { }
+            } message: {
+                Text("This will permanently delete the group and all its messages for everyone. This action cannot be undone.")
             }
             .sheet(isPresented: $showAddParticipants) {
                 AddParticipantsView(conversation: conversation)
@@ -466,6 +495,18 @@ struct GroupSettingsView: View {
             showErrorAlert = true
         }
     }
+    
+    private func deleteGroup() async {
+        guard let currentUserId = authService.currentUser?.id else { return }
+
+        do {
+            try await chatService.deleteGroup(conversationId: conversation.id, userId: currentUserId)
+            dismiss()
+        } catch {
+            errorMessage = error.localizedDescription
+            showErrorAlert = true
+        }
+    }
 
     private func makeAdmin(userId: String) async {
         guard let currentUserId = authService.currentUser?.id else { return }
@@ -518,6 +559,7 @@ struct GroupSettingsView: View {
 struct ParticipantRow: View {
     let participantId: String
     let user: User?
+    let isOwner: Bool
     let isAdmin: Bool
     let isCurrentUserAdmin: Bool
     let isCurrentUser: Bool
@@ -530,7 +572,8 @@ struct ParticipantRow: View {
 
     var body: some View {
         Button(action: {
-            if isCurrentUserAdmin && !isCurrentUser {
+            // Only show actions if current user is admin and this is not the current user or the owner
+            if isCurrentUserAdmin && !isCurrentUser && !isOwner {
                 showActions = true
             }
         }) {
@@ -569,7 +612,11 @@ struct ParticipantRow: View {
                             .font(.caption)
                             .foregroundStyle(.secondary)
 
-                        if isAdmin {
+                        if isOwner {
+                            Text("• Owner")
+                                .font(.caption)
+                                .foregroundStyle(.purple)
+                        } else if isAdmin {
                             Text("• Admin")
                                 .font(.caption)
                                 .foregroundStyle(.blue)
@@ -585,7 +632,7 @@ struct ParticipantRow: View {
 
                 Spacer()
 
-                if isCurrentUserAdmin && !isCurrentUser {
+                if isCurrentUserAdmin && !isCurrentUser && !isOwner {
                     Image(systemName: "chevron.right")
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -594,18 +641,21 @@ struct ParticipantRow: View {
         }
         .buttonStyle(.plain)
         .confirmationDialog("Manage Participant", isPresented: $showActions) {
-            if !isAdmin {
-                Button("Make Admin") {
-                    onMakeAdmin()
+            // Owners cannot be made/removed as admin or removed from group
+            if !isOwner {
+                if !isAdmin {
+                    Button("Make Admin") {
+                        onMakeAdmin()
+                    }
+                } else {
+                    Button("Remove Admin Status") {
+                        onRemoveAdmin()
+                    }
                 }
-            } else {
-                Button("Remove Admin Status") {
-                    onRemoveAdmin()
-                }
-            }
 
-            Button("Remove from Group", role: .destructive) {
-                onRemoveParticipant()
+                Button("Remove from Group", role: .destructive) {
+                    onRemoveParticipant()
+                }
             }
 
             Button("Cancel", role: .cancel) { }

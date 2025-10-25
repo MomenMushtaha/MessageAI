@@ -21,10 +21,15 @@ class AuthService: ObservableObject {
     private var authStateListenerHandle: AuthStateDidChangeListenerHandle?
     
     static let shared = AuthService()
-    
+
     private init() {
-        // Listen to auth state changes
-        setupAuthStateListener()
+        // Auto-login disabled - users must manually log in each time
+        // setupAuthStateListener()
+
+        // Sign out any existing session on app start
+        try? auth.signOut()
+        currentUser = nil
+        isAuthenticated = false
     }
     
     private func setupAuthStateListener() {
@@ -183,6 +188,27 @@ class AuthService: ObservableObject {
             print("✅ Profile updated successfully")
         } catch {
             print("❌ Error updating profile: \(error.localizedDescription)")
+            throw error
+        }
+    }
+
+    func updateUserAvatar(userId: String, image: UIImage) async throws {
+        do {
+            // Upload avatar to S3/CloudFront
+            let avatarURL = try await MediaService.shared.uploadUserAvatar(image, userId: userId)
+
+            // Update user in database
+            try await db.child("users").child(userId).child("avatarURL").setValue(avatarURL)
+
+            // Update local currentUser
+            if var user = currentUser {
+                user.avatarURL = avatarURL
+                currentUser = user
+            }
+
+            print("✅ User avatar updated successfully")
+        } catch {
+            print("❌ Error updating user avatar: \(error.localizedDescription)")
             throw error
         }
     }

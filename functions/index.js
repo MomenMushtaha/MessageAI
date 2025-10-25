@@ -17,10 +17,39 @@ admin.initializeApp();
 // AI/RAG function imports
 const { onMessageCreate: embedNewMessage } = require('./src/triggers/rtdbOnWrite');
 const { summarize: aiSummarize } = require('./src/http/summarize');
+const { mochainChat, mochainHistory } = require('./src/http/mochain');
+
+const getParticipantIds = (conversation) => {
+  if (!conversation) {
+    return [];
+  }
+
+  if (Array.isArray(conversation.participantIds)) {
+    return conversation.participantIds;
+  }
+
+  if (conversation.participantMap && typeof conversation.participantMap === 'object') {
+    return Object.entries(conversation.participantMap)
+      .filter(([, value]) => value === true || (typeof value === 'object' && value?.isParticipant !== false))
+      .map(([key]) => key);
+  }
+
+  if (conversation.participantIds && typeof conversation.participantIds === 'object') {
+    return Object.entries(conversation.participantIds)
+      .filter(([, value]) => value === true)
+      .map(([key]) => key);
+  }
+
+  return [];
+};
 
 // Export AI functions
 exports.embedNewMessage = embedNewMessage;
 exports.aiSummarize = aiSummarize;
+
+// Export MoChain AI Agent functions
+exports.mochainChat = mochainChat;
+exports.mochainHistory = mochainHistory;
 
 /**
  * Send push notification when a new message is created
@@ -55,7 +84,7 @@ exports.sendMessageNotification = functions.database
       }
 
       const conversation = conversationSnapshot.val();
-      const participantIds = conversation.participantIds || [];
+      const participantIds = getParticipantIds(conversation);
       const senderId = message.senderId;
 
       // Get sender info for notification
@@ -98,16 +127,22 @@ exports.sendMessageNotification = functions.database
           .once('value');
 
         // Calculate badge count for this user
-        const userConversationsSnapshot = await admin.database()
-          .ref('conversations')
-          .orderByChild(`participantIds/${recipientId}`)
-          .equalTo(true)
-          .once('value');
+        const conversationsRef = admin.database().ref('conversations');
+        const userConversationsSnapshot = conversation.participantMap
+          ? await conversationsRef
+              .orderByChild(`participantMap/${recipientId}`)
+              .equalTo(true)
+              .once('value')
+          : await conversationsRef.once('value');
 
         let badgeCount = 0;
         if (userConversationsSnapshot.exists()) {
           userConversationsSnapshot.forEach(convSnapshot => {
             const conv = convSnapshot.val();
+            const convParticipants = getParticipantIds(conv);
+            if (!convParticipants.includes(recipientId)) {
+              return;
+            }
             const unreadCounts = conv.unreadCounts || {};
             badgeCount += (unreadCounts[recipientId] || 0);
           });

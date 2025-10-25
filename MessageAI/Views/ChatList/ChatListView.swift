@@ -21,6 +21,7 @@ struct ChatListView: View {
     @State private var deleteErrorMessage = ""
     @State private var showPerformanceMonitor = false
     @State private var showProfile = false
+    @State private var showMoChain = false
 
     var body: some View {
         NavigationStack {
@@ -43,6 +44,13 @@ struct ChatListView: View {
                 .background(Color(.systemGray6))
                 .cornerRadius(10)
                 .padding()
+                
+                // MoChain AI Assistant Card
+                MoChainCard {
+                    showMoChain = true
+                }
+                .padding(.horizontal)
+                .padding(.bottom, 8)
                 
                 // Conversations List
                 if chatService.conversations.isEmpty {
@@ -144,6 +152,10 @@ struct ChatListView: View {
                         .environmentObject(authService)
                         .environmentObject(chatService)
                 }
+            }
+            .sheet(isPresented: $showMoChain) {
+                MoChainChatView()
+                    .environmentObject(authService)
             }
             .navigationDestination(item: $selectedConversationId) { conversationId in
                 if let conversation = chatService.conversations.first(where: { $0.id == conversationId }) {
@@ -420,6 +432,74 @@ struct ConversationRow: View, Equatable {
     }
 }
 
+// MARK: - MoChain Card
+
+struct MoChainCard: View {
+    let action: () -> Void
+    
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 12) {
+                // Gradient Circle Avatar
+                Circle()
+                    .fill(
+                        LinearGradient(
+                            colors: [.purple, .blue],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+                    .frame(width: 50, height: 50)
+                    .overlay {
+                        Image(systemName: "brain.head.profile")
+                            .font(.system(size: 24))
+                            .foregroundStyle(.white)
+                    }
+                    .shadow(color: .purple.opacity(0.3), radius: 8, x: 0, y: 4)
+                
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack {
+                        Text("MoChain")
+                            .font(.headline)
+                            .foregroundStyle(.primary)
+                        
+                        Image(systemName: "sparkles")
+                            .font(.caption)
+                            .foregroundStyle(.purple)
+                    }
+                    
+                    Text("Your AI Assistant")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+                
+                Spacer()
+                
+                Image(systemName: "chevron.right")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .padding()
+            .background(
+                RoundedRectangle(cornerRadius: 16)
+                    .fill(Color(.systemBackground))
+                    .shadow(color: Color.black.opacity(0.05), radius: 8, x: 0, y: 2)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 16)
+                    .strokeBorder(
+                        LinearGradient(
+                            colors: [.purple.opacity(0.3), .blue.opacity(0.3)],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        ),
+                        lineWidth: 1
+                    )
+            )
+        }
+        .buttonStyle(.plain)
+    }
+}
 
 #Preview {
     ChatListView()

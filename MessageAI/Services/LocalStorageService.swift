@@ -90,9 +90,16 @@ class LocalStorageService {
         let descriptor = FetchDescriptor(predicate: predicate)
         
         if let existing = try modelContext.fetch(descriptor).first {
-            // Update existing
+            // Update all fields
+            existing.type = conversation.type.rawValue
+            existing.participantIds = conversation.participantIds
             existing.lastMessageText = conversation.lastMessageText
             existing.lastMessageAt = conversation.lastMessageAt
+            existing.groupName = conversation.groupName
+            existing.groupDescription = conversation.groupDescription
+            existing.groupAvatarURL = conversation.groupAvatarURL
+            existing.ownerId = conversation.ownerId
+            existing.adminIds = conversation.adminIds
             existing.isSynced = isSynced
         } else {
             // Insert new
@@ -140,11 +147,23 @@ class LocalStorageService {
         print("🗑️ Deleted \(oldMessages.count) old messages")
     }
     
+    /// Delete a specific message by ID
+    func deleteMessage(messageId: String) throws {
+        let predicate = #Predicate<LocalMessage> { $0.id == messageId }
+        let descriptor = FetchDescriptor(predicate: predicate)
+
+        if let message = try modelContext.fetch(descriptor).first {
+            modelContext.delete(message)
+            try modelContext.save()
+            print("🗑️ Deleted local message: \(messageId)")
+        }
+    }
+
     /// Delete all messages for a specific conversation
     func deleteMessages(for conversationId: String) throws {
         let predicate = #Predicate<LocalMessage> { $0.conversationId == conversationId }
         let descriptor = FetchDescriptor(predicate: predicate)
-        
+
         let messages = try modelContext.fetch(descriptor)
         for message in messages {
             modelContext.delete(message)
